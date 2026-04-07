@@ -64,6 +64,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 int main(int argc, char** argv)
 {
 	bool dryrun = false;
+	try {
 	Runopts opts(argc, argv, dryrun);
 
 	INFO("Running command:\n", opts.cmdline);
@@ -115,6 +116,9 @@ int main(int argc, char** argv)
 			writeReports(readfeed, readstats, kvdb, opts);
 			break;
 		}
+	}
+	} catch (const smr_exit_requested&) {
+		return 0; /* --help or --version */
 	}
 	return 0;
 }//~main()

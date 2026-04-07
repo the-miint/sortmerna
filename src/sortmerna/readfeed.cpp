@@ -78,6 +78,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <locale> // std::isspace
 #include <thread>
 #include <regex>
+#include <stdexcept>
 
 // forward
 std::streampos filesize(const std::string& file); //util.cpp
@@ -181,8 +182,7 @@ void Readfeed::run()
 	for (std::size_t i = 0; i < split_files.size(); ++i) {
 		ifsv[i].open(split_files[i].path, std::ios_base::in | std::ios_base::binary);
 		if (!ifsv[i].is_open()) {
-			ERR("Failed to open file ", split_files[i].path);
-			exit(1);
+			throw std::runtime_error("Failed to open file " + split_files[i].path.string());
 		}
 	}
 
@@ -225,8 +225,7 @@ bool Readfeed::loadReadByIdx(Read & read)
 
 	pstate->fs.open(Reader::*pstate->readsfile, std::ios_base::in | std::ios_base::binary);
 	if (!rstate->fs.is_open()) {
-		std::cerr << STAMP << "failed to open " << rstate->readsfile << std::endl;
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("failed to open reads file");
 	}
 
 	std::string line;
@@ -244,8 +243,7 @@ bool Readfeed::loadReadByIdx(Read & read)
 
 		if (stat == RL_ERR)
 		{
-			std::cerr << STAMP << "ERROR reading from Reads file. Exiting..." << std::endl;
-			exit(1);
+			throw std::runtime_error("ERROR reading from Reads file");
 		}
 
 		if (line.empty()) continue;
@@ -359,8 +357,7 @@ bool Readfeed::next(int inext, std::string& read, unsigned& seqlen, bool is_orig
 		if (stat == RL_ERR)
 		{
 			auto FR = (inext & 1) == 0 ? FWD : REV;
-			ERR("reading from ", FR, " file. Exiting...");
-			exit(1);
+			throw std::runtime_error(std::string("reading from ") + FR + " file");
 		}
 
 		if (line.empty())
@@ -492,8 +489,7 @@ bool Readfeed::next(int inext, std::string& readstr, bool is_orig, std::vector<R
 		if (stat == RL_ERR)
 		{
 			auto FR = (inext & 1) == 0 ? FWD : REV;
-			ERR("reading from ", FR, " file. Exiting...");
-			exit(1);
+			throw std::runtime_error(std::string("reading from ") + FR + " file");
 		}
 
 		if (line.empty())
@@ -611,8 +607,7 @@ void Readfeed::rewind_in() {
 			ifsv[i].seekg(0); // rewind
 
 			if (!ifsv[i].good()) {
-				ERR("failed rewind stream idx: ", i, " in vector of size: ", ifsv.size(), " iostate: ", ifsv[i].rdstate());
-				exit(1);
+				throw std::runtime_error("failed rewind stream idx: " + std::to_string(i) + " in vector of size: " + std::to_string(ifsv.size()));
 			}
 		}
 		vstate_in[i].reset();
@@ -647,8 +642,7 @@ bool Readfeed::split()
 			ifsv[i].open(orig_files[i].path, std::ios_base::in | std::ios_base::binary);
 		}
 		if (!ifsv[i].is_open()) {
-			ERR("Failed to open file ", orig_files[i].path);
-			exit(1);
+			throw std::runtime_error("Failed to open file " + orig_files[i].path.string());
 		}
 	}
 	rewind_in();
@@ -672,8 +666,7 @@ bool Readfeed::split()
 			ofsv[i].open(split_files[i].path, std::ios::out | std::ios::binary | std::ios::trunc);
 		}
 		if (!ofsv[i].is_open()) {
-			ERR("Failed to open file ", split_files[i].path.generic_string());
-			exit(1);
+			throw std::runtime_error("Failed to open file " + split_files[i].path.string());
 		}
 	}
 
@@ -759,8 +752,7 @@ bool Readfeed::is_split_ready() {
 		INFO("found existing readfeed descriptor ", fn.generic_string());
 		ifs.open(fn, std::ios_base::in | std::ios_base::binary);
 		if (!ifs.is_open()) {
-			ERR("failed to open: ", fn.generic_string());
-			exit(1);
+			throw std::runtime_error("failed to open: " + fn.generic_string());
 		}
 
 		unsigned lidx = 0; // line index
@@ -873,8 +865,7 @@ bool Readfeed::define_format(const int& dbg)
 			ifsv[i].open(orig_files[i].path, std::ios_base::in | std::ios_base::binary);
 		}
 		if (!ifsv[i].is_open()) {
-			ERR("Failed to open file ", orig_files[i].path);
-			exit(1);
+			throw std::runtime_error("Failed to open file " + orig_files[i].path.string());
 		}
 		auto fsz = std::filesystem::file_size(orig_files[i].path);
 		auto blen = fsz > 100 ? 100 : fsz; // num bytes to read: max 100 - issue 290  20210511
@@ -924,8 +915,7 @@ bool Readfeed::define_format(const int& dbg)
 		}
 
 		if (!is_format_defined) {
-			ERR("Cannot define format for file: ", orig_files[i].path);
-			exit(1);
+			throw std::runtime_error("Cannot define format for file: " + orig_files[i].path.string());
 		}
 
 		// reset Izlib
@@ -1051,8 +1041,7 @@ void Readfeed::write_descriptor()
 		std::filesystem::path fn = basedir / "readfeed";
 		std::ofstream ofs(fn, std::ios::out | std::ios::binary | std::ios::trunc);
 		if (!ofs.is_open()) {
-			ERR("failed to open file: ", fn.generic_string());
-			exit(1);
+			throw std::runtime_error("failed to open file: " + fn.generic_string());
 		}
 
         INFO("writing reads descriptor to: ", fn.generic_string());
@@ -1116,8 +1105,7 @@ void Readfeed::init_reading()
 	for (std::size_t i = 0; i < split_files.size(); ++i) {
 		ifsv[i].open(split_files[i].path, std::ios_base::in | std::ios_base::binary);
 		if (!ifsv[i].is_open()) {
-			ERR("failed to open: ", split_files[i].path.generic_string());
-			exit(1);
+			throw std::runtime_error("failed to open: " + split_files[i].path.generic_string());
 		}
 	}
 
@@ -1134,8 +1122,7 @@ int Readfeed::clean()
 		INFO("found descriptor ", fn.generic_string());
 		ifs.open(fn, std::ios_base::in | std::ios_base::binary);
 		if (!ifs.is_open()) {
-			ERR("failed to open: ", fn.generic_string());
-			exit(1);
+			throw std::runtime_error("failed to open: " + fn.generic_string());
 		}
 
 		int lidx = 0; // line index
@@ -1156,8 +1143,7 @@ int Readfeed::clean()
 				if (line[0] != '#') { // skip comments
 					if (lidx == 1 || lidx == 2 || lidx == 3 || lidx == 4) {
 						if (!std::regex_match(line, rx_num)) {
-							ERR("not a number: '", line, "'");
-							exit(1);
+							throw std::runtime_error("not a number: '" + line + "'");
 						}
 					}
 					if (lidx == 0); // skip timestamp

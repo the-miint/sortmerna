@@ -43,6 +43,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <cstring>
 #include <dirent.h>
 #include <algorithm>
+#include <stdexcept>
 
 #if defined(_WIN32)
 	#include <direct.h>
@@ -86,8 +87,7 @@ unsigned int list_dir(std::string dpath)
 
 	if (pdir == NULL)
 	{
-		ERR("Failed to open (" + dpath + ")");
-		exit(1);
+		throw std::runtime_error("Failed to open (" + dpath + ")");
 	}
 
 	while ((next_file = readdir(pdir)) != NULL)

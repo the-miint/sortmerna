@@ -47,6 +47,16 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <tuple>
 #include <array>
 #include <filesystem>
+#include <stdexcept>
+
+/* Thrown by --help / --version to signal a clean early exit.
+ * main() catches this and calls exit(0). Library callers catch
+ * and return SMR_ERR_INVALID_CONFIG. */
+class smr_exit_requested : public std::runtime_error {
+public:
+    explicit smr_exit_requested(const std::string& msg)
+        : std::runtime_error(msg) {}
+};
 #include <cstdint>  // uint64_t
 
 #include "common.hpp"

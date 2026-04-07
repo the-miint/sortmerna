@@ -32,6 +32,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include <string>
 #include <filesystem>
+#include <stdexcept>
 
 #include "unistd.h"
 #include "report.h"
@@ -102,8 +103,7 @@ void Report::openfw2(const unsigned& idx, const unsigned& dbg)
 		fsv[idx].open(fv[idx], std::ios::binary | std::ios::app);
 	}
 	if (!fsv[idx].good()) {
-		ERR("Could not open output file number [", idx, "] : [", fv[idx], "] for writing.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Could not open output file number [" + std::to_string(idx) + "] : [" + fv[idx] + "] for writing.");
 	}
 	else {
 		if (dbg > 0)
@@ -124,8 +124,7 @@ void Report::openfr(unsigned idx)
 		fsv[idx].open(fv[idx], std::ios::binary | std::ios::in);
 	}
 	if (!fsv[idx].good()) {
-		ERR("Could not open output file [", fv[idx], "] for reading.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Could not open output file [" + fv[idx] + "] for reading.");
 	}
 	else {
 		INFO("Opened output file ", fv[idx], " for reading.");

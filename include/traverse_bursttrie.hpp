@@ -44,6 +44,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <cstring> // std::memcpy
 #include <algorithm> // std::copy_n
 #include <cstdint> // uint32_t
+#include <stdexcept>
 
 #include "bitvector.hpp"
 #include "options.hpp"
@@ -75,8 +76,7 @@ struct id_win
 		}
 		else
 		{
-			ERR("string size ", str.size(), " not equal to ", sizeof(id) + sizeof(win), " Cannot restore.");
-			exit(1);
+			throw std::runtime_error("string size " + std::to_string(str.size()) + " not equal to " + std::to_string(sizeof(id) + sizeof(win)) + " Cannot restore.");
 		}
 	}
 

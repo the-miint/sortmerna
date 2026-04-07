@@ -39,7 +39,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <sstream>
 #include <iostream>
 #include <string>
-#include <cassert>
+#include <stdexcept>
 #include <algorithm>
 
 #include "izlib.hpp"
@@ -92,9 +92,9 @@ void Izlib::init(bool is_compress)
 		? deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits | GZIP_ENCODING, memLevel, Z_DEFAULT_STRATEGY)
 		: inflateInit2(&strm, 47);
 	if (ret != Z_OK) {
-		ERR("Izlib::init failed. Error: " , ret);
-		exit(EXIT_FAILURE);;
+		throw std::runtime_error("Izlib::init failed. Error: " + std::to_string(ret));
 	}
+	strm_active = true;
 
 	strm.avail_out = 0;
 
@@ -110,6 +110,8 @@ void Izlib::init(bool is_compress)
 } // ~Izlib::init
 
 int Izlib::reset_deflate() {
+	if (!strm_active) return Z_OK;
+	strm_active = false;
 	return deflateEnd(&strm);
 }
 
@@ -120,23 +122,28 @@ int Izlib::reset_inflate()
 {
 	int ret = 0;
 	for (;strm.avail_in > 0;) {
-		std::fill(z_out.begin(), z_out.end(), 0); // reset buffer to 0
+		std::fill(z_out.begin(), z_out.end(), 0);
 		strm.avail_out = buf_out_size;
 		strm.next_out = &z_out[0];
-		ret = inflate(&strm, Z_NO_FLUSH); // Z_FINISH -> Z_BUF_ERROR, Z_NO_FLUSH -> Z_OK
-		assert(ret == Z_OK || ret == Z_STREAM_END);
+		ret = inflate(&strm, Z_NO_FLUSH);
+		if (ret != Z_OK && ret != Z_STREAM_END)
+			throw std::runtime_error("Unexpected zlib state in reset_inflate: " + std::to_string(ret));
 
 		if (ret == Z_STREAM_END) {
 			ret = inflateReset(&strm);
-			assert(ret == Z_OK);
+			if (ret != Z_OK)
+				throw std::runtime_error("inflateReset failed in reset_inflate: " + std::to_string(ret));
 		}
 		else if (ret != Z_OK) {
-			assert(ret == Z_DATA_ERROR);
 			break;
 		}
 	}
-	ret = inflateEnd(&strm); // ret is Z_OK, not Z_STREAM_END
-	assert(ret == Z_OK || ret == Z_STREAM_END);
+	if (strm_active) {
+		strm_active = false;
+		ret = inflateEnd(&strm);
+		if (ret != Z_OK && ret != Z_STREAM_END)
+			throw std::runtime_error("inflateEnd failed in reset_inflate: " + std::to_string(ret));
+	}
 	return ret;
 }
 
@@ -223,8 +230,12 @@ int Izlib::inflatez(std::ifstream& ifs)
 		if (strm.avail_in == 0 && ifs.eof())
 		{
 			if (strm.avail_out < buf_out_size) strm.avail_out = buf_out_size;
-			ret = inflateEnd(&strm);
-			assert(ret == Z_OK); // free up the resources
+			if (strm_active) {
+				strm_active = false;
+				ret = inflateEnd(&strm);
+				if (ret != Z_OK)
+					throw std::runtime_error("inflateEnd failed at EOF in inflatez: " + std::to_string(ret));
+			}
 			return Z_STREAM_END;
 		}
 
@@ -237,7 +248,8 @@ int Izlib::inflatez(std::ifstream& ifs)
 		}
 
 		ret = inflate(&strm, Z_NO_FLUSH); //  Z_NO_FLUSH Z_SYNC_FLUSH Z_BLOCK
-		assert(ret != Z_STREAM_ERROR);
+		if (ret == Z_STREAM_ERROR)
+			throw std::runtime_error("Z_STREAM_ERROR in inflatez — zlib stream is inconsistent");
 
 		switch (ret)
 		{
@@ -245,11 +257,11 @@ int Izlib::inflatez(std::ifstream& ifs)
 			ret = Z_DATA_ERROR; /* and fall through */
 		case Z_DATA_ERROR:
 		case Z_MEM_ERROR:
-			inflateEnd(&strm);
+			if (strm_active) { strm_active = false; inflateEnd(&strm); }
 			return ret;
 		case Z_STREAM_END:
 			ret = inflateReset(&strm);
-			assert(ret == Z_OK);
+			if (!(ret == Z_OK)) throw std::runtime_error("inflateReset failed in inflatez: " + std::to_string(ret));
 			break;
 		}
 
@@ -315,7 +327,7 @@ int Izlib::defstr(const std::string& readstr, std::ostream& ofs, bool is_last, c
 			strm.next_out = z_out.data();
 			// deflate
 			ret = deflate(&strm, flush); // runs until OUT is full or IN is empty
-			assert(ret != Z_STREAM_ERROR);
+			if (ret == Z_STREAM_ERROR) throw std::runtime_error("Z_STREAM_ERROR in defstr — zlib stream is inconsistent");
 			// check accumulated output
 			//ret = deflatePending(&strm, &pending_bytes, &pending_bits);
 			//assert(ret != Z_STREAM_ERROR);
@@ -332,12 +344,12 @@ int Izlib::defstr(const std::string& readstr, std::ostream& ofs, bool is_last, c
 				break;
 		} // ~for
 
-		assert(strm.avail_in == 0); // all input was used
+		if (!(strm.avail_in == 0)) throw std::runtime_error("Unexpected remaining input after deflate in defstr");
 		if (is_ess) z_in_num = 0; // reset
 	} // ~for
 
 	if (flush == Z_FINISH) {
-		assert(ret == Z_STREAM_END);
+		if (!(ret == Z_STREAM_END)) throw std::runtime_error("Expected Z_STREAM_END after final deflate in defstr, got: " + std::to_string(ret));
 		deflateEnd(&strm);
 		ofs.flush();
 		if (dbg > 1)
@@ -361,7 +373,7 @@ int Izlib::finish_deflate(std::ostream& ofs, const int&& dbg)
 		strm.next_out = z_out.data();
 		// deflate
 		ret = deflate(&strm, Z_FINISH); // runs until OUT is full or IN is empty
-		assert(ret != Z_STREAM_ERROR);
+		if (ret == Z_STREAM_ERROR) throw std::runtime_error("Z_STREAM_ERROR in finish_deflate — zlib stream is inconsistent");
 		ofs.write(reinterpret_cast<char*>(z_out.data()), buf_out_size - strm.avail_out);
 		if (ofs.fail()) {
 			(void)deflateEnd(&strm);

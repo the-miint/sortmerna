@@ -37,6 +37,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include <vector>
 #include <cstdint>
+#include <stdexcept>
 
 #include "options.hpp"
 #include "traverse_bursttrie.hpp"
@@ -186,14 +187,12 @@ void traversetrie_align(
 					unsigned char* start_bucket = (unsigned char*)trie_t->nodetype.bucket;
 					if (start_bucket == NULL)
 					{
-						fprintf(stderr, "  ERROR: pointer start_bucket == NULL (paralleltraversal.cpp)\n");
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("pointer start_bucket == NULL (paralleltraversal.cpp)");
 					}
 					unsigned char* end_bucket = start_bucket + trie_t->size;
 					if (end_bucket == NULL)
 					{
-						fprintf(stderr, "  ERROR: pointer end_bucket == NULL (paralleltraversal.cpp)\n");
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("pointer end_bucket == NULL (paralleltraversal.cpp)");
 					}
 
 					// traverse the bucket
@@ -334,14 +333,12 @@ void traversetrie_debug(NodeElement* trie_node, uint32_t depth, uint32_t &total_
 			unsigned char* start_bucket = (unsigned char*)trie_node->nodetype.bucket;
 			if (start_bucket == NULL)
 			{
-				fprintf(stderr, "  ERROR: pointer start_bucket == NULL (paralleltraversal.cpp)\n");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("pointer start_bucket == NULL (paralleltraversal.cpp)");
 			}
 			unsigned char* end_bucket = start_bucket + trie_node->size;
 			if (end_bucket == NULL)
 			{
-				fprintf(stderr, "  ERROR: pointer end_bucket == NULL (paralleltraversal.cpp)\n");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("pointer end_bucket == NULL (paralleltraversal.cpp)");
 			}
 
 			cout << "size of bucket = " << trie_node->size << endl; //TESTING

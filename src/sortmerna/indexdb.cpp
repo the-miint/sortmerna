@@ -50,6 +50,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <iostream>
 #include <filesystem>
 #include <chrono>
+#include <stdexcept>
 
 #include <sys/stat.h> //for creating tmp dir
 
@@ -168,8 +169,7 @@ inline void insert_prefix(NodeElement* trie_node,
 		node_elem->nodetype.bucket = (void*)malloc(ENTRYSIZE);
 		if (node_elem->nodetype.bucket == NULL)
 		{
-			ERR("Could not allocate memory for bucket (insert_prefix() in indexdb.cpp)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Could not allocate memory for bucket (insert_prefix() in indexdb.cpp)");
 		}
 		// initialize bucket memory to 0
 		memset(node_elem->nodetype.bucket, 0, ENTRYSIZE);
@@ -187,8 +187,7 @@ inline void insert_prefix(NodeElement* trie_node,
 		node_elem->nodetype.bucket = (void*)malloc(node_elem_size + ENTRYSIZE);
 		if (node_elem->nodetype.bucket == NULL)
 		{
-			ERR(": could not allocate memory for bucket resize (insert_prefix() in indexdb.cpp)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("could not allocate memory for bucket resize (insert_prefix() in indexdb.cpp)");
 		}
 
 		memset(node_elem->nodetype.bucket, 0, node_elem_size + ENTRYSIZE);
@@ -230,9 +229,7 @@ inline void insert_prefix(NodeElement* trie_node,
 			NodeElement* child_node = (NodeElement*)malloc(4 * sizeof(NodeElement));
 			if (child_node == NULL)
 			{
-				std::cerr << RED << "  ERROR" << COLOFF 
-					<< ": could not allocate memory for child_node (insert_prefix())" << std::endl;
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("could not allocate memory for child_node (insert_prefix())");
 			}
 			memset(child_node, 0, 4 * sizeof(NodeElement));
 
@@ -250,9 +247,7 @@ inline void insert_prefix(NodeElement* trie_node,
 					node_elem_child->nodetype.bucket = (void*)malloc(ENTRYSIZE);
 					if (node_elem_child->nodetype.bucket == NULL)
 					{
-						std::cerr << RED << "  ERROR" << COLOFF <<
-							": could not allocate memory for child bucket (insert_prefix())" << std::endl;
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("could not allocate memory for child bucket (insert_prefix())");
 					}
 					memset(node_elem_child->nodetype.bucket, 0, ENTRYSIZE);
 					node_elem_child->flag = 2;
@@ -266,9 +261,7 @@ inline void insert_prefix(NodeElement* trie_node,
 					node_elem_child->nodetype.bucket = (void*)malloc(child_bucket_size + ENTRYSIZE);
 					if (node_elem_child->nodetype.bucket == NULL)
 					{
-						std::cerr << RED << "  ERROR" << COLOFF 
-							<< ": could not allocate memory for child bucket resize (insert_prefix() in indexdb.cpp)" << std::endl;
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("could not allocate memory for child bucket resize (insert_prefix() in indexdb.cpp)");
 					}
 					memset(node_elem_child->nodetype.bucket, 0, child_bucket_size + ENTRYSIZE);
 					memcpy(node_elem_child->nodetype.bucket, src, child_bucket_size);
@@ -651,14 +644,12 @@ void traversetrie_debug(NodeElement* trie_node, uint32_t depth, uint32_t &total_
 			unsigned char* start_bucket = (unsigned char*)trie_node->nodetype.bucket;
 			if (start_bucket == NULL)
 			{
-				fprintf(stderr, "  ERROR: pointer start_bucket == NULL (paralleltraversal.cpp)\n");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("pointer start_bucket == NULL (paralleltraversal.cpp)");
 			}
 			unsigned char* end_bucket = start_bucket + trie_node->size;
 			if (end_bucket == NULL)
 			{
-				fprintf(stderr, "  ERROR: pointer end_bucket == NULL (paralleltraversal.cpp)\n");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("pointer end_bucket == NULL (paralleltraversal.cpp)");
 			}
 
 			// traverse the bucket
@@ -848,9 +839,7 @@ void load_index(kmer* lookup_table, char* outfile, Runopts &opts, IndexBuildStat
 					// ?
 					default:
 					{
-						std::cerr << RED << "  ERROR" << COLOFF 
-							<<": flag is set to " << trienode->flag << " (load_index)" << std::endl;
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("flag is set to " + std::to_string(trienode->flag) + " (load_index)");
 					}
 					break;
 					}
@@ -977,7 +966,7 @@ namespace {
 			<<                          "            help" << std::endl << std::endl;
 
 		std::cout << ss.str();
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("indexdb: incorrect command-line arguments");
 	}//~printlist()
 }
 
@@ -1097,8 +1086,7 @@ void get_keys_str(std::string &keys_str)
 			ss << "No write permissions in current directory: " << strerror(errno) << std::endl
 				<< "  Please set --tmpdir to a writable directory,"
 				<< " or change the write permissions in $TMPDIR, e.g. /tmp/ (Linux), or current directory.";
-			ERR(ss.str());
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(ss.str());
 		}
 		else
 		{
@@ -1165,8 +1153,7 @@ int build_index(Runopts& opts)
 		FILE *fp = fopen(idxpair.first.data(), "r");
 		if (fp == NULL)
 		{
-			ERR("Could not open file: " , idxpair.first);
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Could not open file: " + idxpair.first);
 		}
 
 		// get the size of the refs file
@@ -1175,8 +1162,7 @@ int build_index(Runopts& opts)
 		fseek(fp, 0L, SEEK_SET);
 
 		if (idxpair.second.size() == 0) {
-			ERR("Index file prefix for reference " , idxpair.first , " is empty. Cannot proceed.");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Index file prefix for reference " + idxpair.first + " is empty. Cannot proceed.");
 		}
 		else {
 			INFO("Begin indexing file ", idxpair.first, 
@@ -1215,9 +1201,7 @@ int build_index(Runopts& opts)
 			if (nt == '>') strs += 2;
 			else
 			{
-				ERR("Each read header of the database fasta file must begin with '>';\n",
-					"  check sequence # ", strs);
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Each read header of the database fasta file must begin with '>'; check sequence # " + strs);
 			}
 
 			// scan to end of header name
@@ -1253,10 +1237,9 @@ int build_index(Runopts& opts)
 			full_len += len;
 			if (len < ibs.pread_gv)
 			{
-				ERR("At least one of your sequences is shorter than the seed length ",
-					ibs.pread_gv, ", please filter out all sequences shorter than ",
-					ibs.pread_gv, " to continue index construction.");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("At least one of your sequences is shorter than the seed length " +
+					std::to_string(ibs.pread_gv) + ", please filter out all sequences shorter than " +
+					std::to_string(ibs.pread_gv) + " to continue index construction.");
 			}
 			// if ( len > maxlen ) then ( maxlen = rrnalen ) else ( do nothing )
 			len > maxlen ? maxlen = len : maxlen;
@@ -1301,8 +1284,7 @@ int build_index(Runopts& opts)
 			FILE *keys = fopen(keys_file.c_str(), "w+");
 			if (keys == NULL)
 			{
-				ERR("Could not open [" , keys_file , "] file for writing");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Could not open [" + keys_file + "] file for writing");
 			}
 
 			// count of unique 19-mers in database
@@ -1315,8 +1297,7 @@ int build_index(Runopts& opts)
 			kmer *lookup_table = (kmer*)malloc((1 << opts.seed_win_len) * sizeof(kmer));
 			if (lookup_table == NULL)
 			{
-				ERR("Could not allocate memory for 9-mer look-up table");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Could not allocate memory for 9-mer look-up table");
 			}
 
 			memset(lookup_table, 0, (1 << opts.seed_win_len) * sizeof(kmer));
@@ -1487,8 +1468,7 @@ int build_index(Runopts& opts)
 							lookup_table[kmer_key_short_f].trie_F = (NodeElement*)malloc(4 * sizeof(NodeElement));
 							if (lookup_table[kmer_key_short_f].trie_F == NULL)
 							{
-								std::cerr << RED << "  ERROR" << COLOFF << ": could not allocate memory for trie_node in indexdb.cpp" << std::endl;
-								exit(EXIT_FAILURE);
+								throw std::runtime_error("could not allocate memory for trie_node in indexdb.cpp");
 							}
 							memset(lookup_table[kmer_key_short_f].trie_F, 0, 4 * sizeof(NodeElement));
 						}
@@ -1518,8 +1498,7 @@ int build_index(Runopts& opts)
 							lookup_table[kmer_key_short_r].trie_R = (NodeElement*)malloc(4 * sizeof(NodeElement));
 							if (lookup_table[kmer_key_short_r].trie_R == NULL)
 							{
-								std::cerr << RED << "  ERROR" << COLOFF << ": could not allocate memory for trie_node in indexdb.cpp" << std::endl;
-								exit(EXIT_FAILURE);
+								throw std::runtime_error("could not allocate memory for trie_node in indexdb.cpp");
 							}
 							memset(lookup_table[kmer_key_short_r].trie_R, 0, 4 * sizeof(NodeElement));
 						}
@@ -1573,8 +1552,7 @@ int build_index(Runopts& opts)
 			FILE * keys_fd = keys;
 			if (keys_fd == NULL)
 			{
-				ERR("File '", keys_file, "' not found");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("File '" + keys_file + "' not found");
 			}
 			cmph_io_adapter_t *source = cmph_io_nlfile_adapter(keys_fd);
 
@@ -1611,8 +1589,7 @@ int build_index(Runopts& opts)
 			positions_tbl = (kmer_origin*)malloc(number_elements * sizeof(kmer_origin));
 			if (positions_tbl == NULL)
 			{
-				ERR("could not allocate memory for positions_tbl (main(), indexdb.cpp)");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("could not allocate memory for positions_tbl (main(), indexdb.cpp)");
 			}
 
 			memset(positions_tbl, 0, number_elements * sizeof(kmer_origin));
@@ -1769,8 +1746,7 @@ int build_index(Runopts& opts)
 			std::ofstream oskmer(idx_file, std::ios::binary);
 			if (!oskmer.is_open())
 			{
-				ERR("Failed to open file: ", idx_file, " for writing. Error: ", strerror(errno));
-				exit(1);
+				throw std::runtime_error("Failed to open file: " + idx_file + " for writing. Error: " + strerror(errno));
 			}
 
 			if (opts.is_verbose) {
@@ -1853,8 +1829,7 @@ int build_index(Runopts& opts)
 			std::ofstream stats(idxpair.second + ".stats", std::ios::binary);
 			if (!stats.good())
 			{
-				ERR("The file '", idxpair.second + ".stats", "' cannot be created: ", strerror(errno));
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("The file '" + idxpair.second + ".stats' cannot be created: " + strerror(errno));
 			}
 
 			// file size for file used to build the index

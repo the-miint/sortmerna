@@ -39,6 +39,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include <iostream>
 #include <filesystem>
+#include <stdexcept>
 
 KeyValueDatabase::KeyValueDatabase(std::string const &kvdbPath) 
 {
@@ -51,7 +52,7 @@ KeyValueDatabase::KeyValueDatabase(std::string const &kvdbPath)
 #endif
 	options.create_if_missing = true;
 	rocksdb::Status s = rocksdb::DB::Open(options, kvdbPath, &kvdb);
-	assert(s.ok());
+	if (!s.ok()) throw std::runtime_error("Failed to open key-value database at " + kvdbPath + ": " + s.ToString());
 }
 
 /* 

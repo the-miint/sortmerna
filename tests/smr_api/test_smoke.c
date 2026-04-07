@@ -221,8 +221,8 @@ TEST(test_last_error_set_after_smr_run) {
     smr_context_t *ctx = smr_ctx_create(&cfg);
     ASSERT_NOT_NULL(ctx);
     int rc = smr_run(ctx, NULL, 0, NULL, 0, NULL, NULL);
-    ASSERT_EQ_INT(rc, SMR_ERR_NOT_IMPLEMENTED);
-    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_NOT_IMPLEMENTED);
+    ASSERT_TRUE(rc < 0);
+    ASSERT_TRUE(smr_last_error_code(ctx) < 0);
     const char *err = smr_last_error(ctx);
     ASSERT_NOT_NULL(err);
     ASSERT_TRUE(err[0] != '\0');
@@ -258,6 +258,103 @@ TEST(test_two_contexts_create_destroy) {
     smr_context_t *c = smr_ctx_create(&cfg);
     ASSERT_NOT_NULL(c);
     smr_ctx_destroy(c);
+}
+
+/* ---- Phase 4: Error handling ---- */
+
+TEST(test_run_null_refs_returns_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, NULL, 0, reads, 1, &out, &stats);
+    ASSERT_TRUE(rc < 0);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_null_reads_returns_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, NULL, 0, &out, &stats);
+    ASSERT_TRUE(rc < 0);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_nonexistent_ref_returns_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { "/nonexistent/ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_ERR_IO);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_nonexistent_reads_returns_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { "/nonexistent/reads.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_ERR_IO);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_empty_ref_returns_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/empty_file.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_TRUE(rc < 0);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_last_error_descriptive_after_bad_input) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { "/nonexistent/ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    const char *err = smr_last_error(ctx);
+    ASSERT_NOT_NULL(err);
+    ASSERT_TRUE(err[0] != '\0');
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_bad_input_does_not_crash) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    /* multiple bad calls in sequence — none should crash */
+    smr_run(ctx, NULL, 0, NULL, 0, NULL, NULL);
+    const char *refs[] = { "/bad" };
+    const char *reads[] = { "/bad" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    smr_run(ctx, refs, 1, NULL, 0, &out, &stats);
+    /* if we got here, nothing crashed */
+    ASSERT_TRUE(1);
+    smr_ctx_destroy(ctx);
 }
 
 TEST_MAIN_BEGIN()
@@ -298,4 +395,12 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_last_error_code_null_ctx);
     /* Phase 3 */
     RUN_TEST(test_two_contexts_create_destroy);
+    /* Phase 4 */
+    RUN_TEST(test_run_null_refs_returns_error);
+    RUN_TEST(test_run_null_reads_returns_error);
+    RUN_TEST(test_run_nonexistent_ref_returns_error);
+    RUN_TEST(test_run_nonexistent_reads_returns_error);
+    RUN_TEST(test_run_empty_ref_returns_error);
+    RUN_TEST(test_last_error_descriptive_after_bad_input);
+    RUN_TEST(test_run_bad_input_does_not_crash);
 TEST_MAIN_END()

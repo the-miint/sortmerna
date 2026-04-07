@@ -89,6 +89,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <functional> // std::invoke
 #include <filesystem>
 #include <algorithm>
+#include <stdexcept>
 
 
 #ifdef __APPLE__
@@ -131,8 +132,7 @@ void Runopts::opt_reads(const std::string &file)
 
 	if (file.size() == 0)
 	{
-		ERR(help_reads);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(help_reads);
 	}
 
 	// check file exists
@@ -157,23 +157,20 @@ void Runopts::opt_reads(const std::string &file)
 			if (!std::filesystem::exists(workdir / file))
 			{
 				INFO("Could not locate File [", file, "] neither at current path [", std::filesystem::current_path(), "] nor in Workdir [", workdir, "]");
-				ERR(help_reads);
-				exit(EXIT_FAILURE);
+				throw std::runtime_error(help_reads);
 			}
 		}
 	}
 	else
 	{
-		ERR("The file [", file, "] is not an existing/valid absolute or relative path\n", help_reads);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("The file [" + file + "] is not an existing/valid absolute or relative path");
 	}
 
 	// check the file can be read
 	std::ifstream ifs(fpath_a, std::ios_base::in | std::ios_base::binary);
 	if (!ifs.is_open())
 	{
-		ERR("Failed to open file [" , fpath_a , "]");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Failed to open file [" + fpath_a.string() + "]");
 	}
 	else {
 		ifs.close();
@@ -191,8 +188,7 @@ void Runopts::opt_ref(const std::string &refpath)
 
 	if (refpath.size() == 0)
 	{
-		ERR(help_ref);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(help_ref);
 	}
 
 	// check file exists and can be read
@@ -216,23 +212,19 @@ void Runopts::opt_ref(const std::string &refpath)
 			INFO("File  [" , refpath , "] has not been found in the current directory. Trying the working directory ...");
 			if (!std::filesystem::exists(workdir / refpath))
 			{
-				ERR("Could not locate File [" , refpath , "] neither at current path [" ,
-					std::filesystem::current_path()	, "] nor in Workdir [" , workdir , "]\n", help_ref);
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Could not locate File [" + refpath + "] neither at current path nor in Workdir. " + help_ref);
 			}
 		}
 	}
 	else
 	{
-		ERR("The file " , refpath , " is not an existing/valid absolute or relative path\n", help_ref);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("The file " + refpath + " is not an existing/valid absolute or relative path");
 	}
 
 	// check files are readable
 	std::ifstream ifstr(fpath_a);
 	if (!ifstr.is_open() || !ifstr.good()) {
-		ERR("Cannot read file [" , refpath , "]");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Cannot read file [" + refpath + "]");
 	}
 	else {
 		INFO("File " , std::filesystem::absolute(refpath) , " exists and is readable");
@@ -291,8 +283,7 @@ void Runopts::opt_other(const std::string &file)
 	auto cnt = mopt.count(OPT_FASTX);
 	if (cnt == 0)
 	{
-		ERR("Option '" + OPT_OTHER + "' can only be used together with '"+ OPT_FASTX + "' option.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Option '" + std::string(OPT_OTHER) + "' can only be used together with '" + OPT_FASTX + "' option.");
 	}
 
 	if (file.size() == 0)
@@ -347,8 +338,7 @@ void Runopts::opt_paired(const std::string& val)
 		ss << STAMP << "'" << OPT_PAIRED << "' " 
 			"can only be used with a single reads file to indicate it holds paired reads.\n"
 			"However option '" << OPT_READS << "' was specified [" << numread << "] times";
-		ERR(ss.str());
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(ss.str());
 	}
 	is_paired = true;
 } // ~Runopts::optPaired
@@ -383,8 +373,7 @@ void Runopts::opt_match(const std::string &val)
 	if (val.size() == 0)
 	{
 		ss << STAMP << "'" << OPT_MATCH << "' " << "requires a positive integer as input e.g. 2";
-		ERR(ss.str());
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(ss.str());
 	}
 	// set match
 	if (!match_set)
@@ -396,8 +385,7 @@ void Runopts::opt_match(const std::string &val)
 	{
 		ss.str("");
 		ss << STAMP << "'" << OPT_MATCH << "' " << "[INT] has been set twice, please verify your choice";
-		ERR(ss.str());
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(ss.str());
 	}
 } // ~Runopts::optMatch
 
@@ -405,8 +393,7 @@ void Runopts::opt_mismatch(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR("--mismatch [INT] requires a negative integer input (ex. --mismatch -2)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--mismatch [INT] requires a negative integer input (ex. --mismatch -2)");
 	}
 
 	// set mismatch
@@ -415,16 +402,13 @@ void Runopts::opt_mismatch(const std::string &val)
 		mismatch = std::stoi(val);
 		if (mismatch > 0)
 		{
-			ERR("--mismatch [INT] takes a negative integer (ex. --mismatch -2)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("--mismatch [INT] takes a negative integer (ex. --mismatch -2)");
 		}
 		mismatch_set = true;
 	}
 	else
 	{
-		ERR("--mismatch [INT] has been set twice, please verify your choice");
-		print_help();
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--mismatch [INT] has been set twice, please verify your choice");
 	}
 } // ~Runopts::opt_mismatch
 
@@ -432,8 +416,7 @@ void Runopts::opt_gap_open(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR("--gap_open [INT] requires a positive integer as input (ex. --gap_open 5)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--gap_open [INT] requires a positive integer as input (ex. --gap_open 5)");
 	}
 
 	// set gap open
@@ -442,16 +425,13 @@ void Runopts::opt_gap_open(const std::string &val)
 		gap_open = atoi(val.data());
 		if (gap_open < 0)
 		{
-			ERR("--gap_open [INT] requires a positive integer as input (ex. --gap_open 5)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("--gap_open [INT] requires a positive integer as input (ex. --gap_open 5)");
 		}
 		gap_open_set = true;
 	}
 	else
 	{
-		ERR("--gap_open [INT] has been set twice, please verify your choice");
-		print_help();
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--gap_open [INT] has been set twice, please verify your choice");
 	}
 } // ~Runopts::opt_gap_open
 
@@ -459,8 +439,7 @@ void Runopts::opt_gap_ext(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR("--gap_ext [INT] requires a positive integer as input (ex. --gap_ext 2)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--gap_ext [INT] requires a positive integer as input (ex. --gap_ext 2)");
 	}
 	// set gap extend
 	if (!gap_ext_set)
@@ -468,16 +447,13 @@ void Runopts::opt_gap_ext(const std::string &val)
 		gap_extension = atoi(val.data());
 		if (gap_extension < 0)
 		{
-			ERR("--gap_ext [INT] requires a positive integer as input (ex. --gap_ext 2)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("--gap_ext [INT] requires a positive integer as input (ex. --gap_ext 2)");
 		}
 		gap_ext_set = true;
 	}
 	else
 	{
-		ERR("--gap_ext [INT] has been set twice, please verify your choice");
-		print_help();
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--gap_ext [INT] has been set twice, please verify your choice");
 	}
 } // ~Runopts::opt_gap_ext
 
@@ -485,16 +461,14 @@ void Runopts::opt_num_seeds(const std::string& val)
 {
 	if (val.size() == 0)
 	{
-		ERR("--num_seeds [INT] requires a positive integer as input (ex. --num_seeds 6)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--num_seeds [INT] requires a positive integer as input (ex. --num_seeds 6)");
 	}
 
 	char* end = 0;
 	num_seeds = (int)strtol(val.data(), &end, 10); // convert to integer
 	if (num_seeds <= 0)
 	{
-		ERR("--num_seeds [INT] requires a positive integer (>0) as input (ex. --num_seeds 6)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--num_seeds [INT] requires a positive integer (>0) as input (ex. --num_seeds 6)");
 	}
 
 } // ~Runopts::opt_num_seeds
@@ -504,8 +478,7 @@ void Runopts::opt_fastx(const std::string &val)
 {
 	if (is_fastx)
 	{
-		ERR("--fastx has already been set once.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--fastx has already been set once.");
 	}
 	else
 	{
@@ -576,21 +549,18 @@ void Runopts::opt_blast(const std::string &val)
 		}
 		if (!match_found)
 		{
-			ERR("'" , opt , "' is not supported in --blast [STRING].");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("'" + opt + "' is not supported in --blast [STRING].");
 		}
 	}
 	// more than 1 field with blast human-readable format given
 	if (blast_human_readable && (blastops.size() > 1))
 	{
-		ERR("for human-readable format, --blast [STRING] can only contain a single field '0'.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("for human-readable format, --blast [STRING] can only contain a single field '0'.");
 	}
 	// both human-readable and tabular format options have been chosen
 	if (blast_human_readable && blastFormat == BlastFormat::TABULAR)
 	{
-		ERR("--blast [STRING] can only have one of the options '0' (human-readable) or '1' (tabular).");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--blast [STRING] can only have one of the options '0' (human-readable) or '1' (tabular).");
 	}
 
 	is_blast = true;
@@ -601,22 +571,19 @@ void Runopts::opt_min_lis(const std::string &val)
 	std::stringstream ss;
 	if (val.size() == 0)
 	{
-		ERR("'", OPT_MIN_LIS, "' [INT] requires a positive integer as input e.g. 2. (if 0 - all high scoring reference sequences are searched)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_MIN_LIS + "' [INT] requires a positive integer as input e.g. 2. (if 0 - all high scoring reference sequences are searched)");
 	}
 
 	// min_lis_gv has already been set
 	if (is_min_lis)
 	{
-		ERR("'" , OPT_MIN_LIS , "' [INT] has been set twice, please verify your choice.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_MIN_LIS + "' [INT] has been set twice, please verify your choice.");
 	}
 	else
 	{
 		if ((sscanf(val.data(), "%d", &min_lis) != 1) || min_lis < 0)
 		{
-			ERR("'", OPT_MIN_LIS, "' [INT] requires a positive integer as input e.g. 2. If 0, all high scoring reference sequences are searched)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(std::string("'") + OPT_MIN_LIS + "' [INT] requires a positive integer as input e.g. 2. If 0, all high scoring reference sequences are searched)");
 		}
 		is_min_lis = true;
 	}
@@ -632,22 +599,19 @@ void Runopts::opt_num_alignments(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR("'", OPT_NUM_ALIGNMENTS, "' [INT] requires a posistive integer as input e.g. 2. If 0, all alignments are output.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_NUM_ALIGNMENTS + "' [INT] requires a positive integer as input e.g. 2. If 0, all alignments are output.");
 	}
 
 	if (is_num_alignments)
 	{
-		ERR("'", OPT_NUM_ALIGNMENTS, "' [INT] has been set twice, please verify your parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_NUM_ALIGNMENTS + "' [INT] has been set twice, please verify your parameters.");
 	}
 
 	// set number of alignments to output reaching the E-value
 	auto ii = std::stoi(val);
 	if (ii < 0)
 	{
-		ERR("'", OPT_NUM_ALIGNMENTS, "' requires a positive integer as input e.g. 2. If 0, all alignments are output.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_NUM_ALIGNMENTS + "' requires a positive integer as input e.g. 2. If 0, all alignments are output.");
 	}
 	else {
 		num_alignments = ii;
@@ -661,8 +625,7 @@ void Runopts::opt_edges(const std::string &val)
 	// --edges is already set
 	if (edges_set)
 	{
-		ERR(" : --edges [INT]%% has already been set once.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : --edges [INT]%% has already been set once.");
 	}
 
 	char *end = 0;
@@ -675,8 +638,7 @@ void Runopts::opt_edges(const std::string &val)
 
 	if (edges < 1 || edges > 10)
 	{
-		ERR(" : --edges [INT]%% requires a positive integer between 0-10 as input (ex. --edges 4).");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : --edges [INT]%% requires a positive integer between 0-10 as input (ex. --edges 4).");
 	}
 } // ~Runopts::optEdges
 
@@ -694,8 +656,7 @@ void Runopts::opt_SQ(const std::string &val)
 {
 	if (is_SQ)
 	{
-		ERR(" : BOOL --SQ has been set twice, please verify your choice.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : BOOL --SQ has been set twice, please verify your choice.");
 	}
 
 	is_SQ = true;
@@ -705,8 +666,7 @@ void Runopts::opt_passes(const std::string &val)
 {
 	if (passes_set)
 	{
-		ERR("'", OPT_PASSES, "' [INT,INT,INT] has been set twice, please verify your choice.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_PASSES + "' [INT,INT,INT] has been set twice, please verify your choice.");
 	}
 
 	// set passes
@@ -716,16 +676,14 @@ void Runopts::opt_passes(const std::string &val)
 		pos_from += pos +1;
 		if (++count > 3) 
 		{
-			ERR("Exactly 3 integers has to be provided with '" , OPT_PASSES , "' [INT,INT,INT]");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(std::string("Exactly 3 integers has to be provided with '") + OPT_PASSES + "' [INT,INT,INT]");
 		}
 		auto skiplen = std::stoi(tok);
 		if (skiplen > 0)
 			skiplengths.emplace_back(skiplen);
 		else
 		{
-			ERR("All three integers in '", OPT_PASSES, "' [INT,INT,INT] must contain positive integers where 0 < INT < (shortest read length).");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(std::string("All three integers in '") + OPT_PASSES + "' [INT,INT,INT] must contain positive integers where 0 < INT < (shortest read length).");
 		}
 	}
 	passes_set = true;
@@ -739,14 +697,12 @@ void Runopts::opt_id(const std::string &val)
 		if ((sscanf(val.data(), "%lf", &min_id) != 1) ||
 			(min_id < 0) || (min_id > 1))
 		{
-			ERR(" : --id [DOUBLE] must be a positive float with value 0<=id<=1.");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(" : --id [DOUBLE] must be a positive float with value 0<=id<=1.");
 		}
 	}
 	else
 	{
-		ERR(" : --id [DOUBLE] has been set twice, please verify your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : --id [DOUBLE] has been set twice, please verify your command parameters.");
 	}
 } // ~Runopts::opt_id
 
@@ -758,14 +714,12 @@ void Runopts::opt_coverage(const std::string &val)
 		if ((sscanf(val.data(), "%lf", &min_cov) != 1) ||
 			(min_cov < 0) || (min_cov > 1))
 		{
-			ERR(" : --coverage [DOUBLE] must be a positive float with value 0<=id<=1.");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(" : --coverage [DOUBLE] must be a positive float with value 0<=id<=1.");
 		}
 	}
 	else
 	{
-		ERR(" : --coverage [DOUBLE] has been set twice, please verify your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : --coverage [DOUBLE] has been set twice, please verify your command parameters.");
 	}
 } // ~Runopts::opt_coverage
 
@@ -776,14 +730,12 @@ void Runopts::opt_version(const std::string &val)
 		<< "Build Date: " << sortmerna_build_compile_date << std::endl
 		<< sortmerna_build_git_sha << std::endl
 		<< sortmerna_build_git_date << std::endl;
-	exit(EXIT_SUCCESS);
+	throw smr_exit_requested("--version");
 } // ~Runopts::opt_version
 
 void Runopts::opt_unknown(char **argv, int &narg, char * opt)
 {
-	ERR(" : option --" , opt , " not recognized");
-	print_help();
-	exit(EXIT_FAILURE);
+	throw std::runtime_error(std::string("option --") + opt + " not recognized");
 } // ~Runopts::opt_unknown
 
 void Runopts::opt_e(const std::string &val)
@@ -793,8 +745,7 @@ void Runopts::opt_e(const std::string &val)
 	// E-value
 	if (val.size() == 0)
 	{
-		ERR(": -e [DOUBLE] requires a positive double as input (ex. --e 1e-5)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(": -e [DOUBLE] requires a positive double as input (ex. --e 1e-5)");
 	}
 
 	if (evalue < 0)
@@ -802,14 +753,12 @@ void Runopts::opt_e(const std::string &val)
 		sscanf(val.data(), "%lf", &evalue);
 		if (evalue < 0)
 		{
-			ERR(" : -e [DOUBLE] requires a positive double as input (ex. --e 1e-5)");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error(" : -e [DOUBLE] requires a positive double as input (ex. --e 1e-5)");
 		}
 	}
 	else
 	{
-		ERR(" : -e [DOUBLE] has been set twice, please verify your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : -e [DOUBLE] has been set twice, please verify your command parameters.");
 	}
 } // ~Runopts::opt_e
 
@@ -822,8 +771,7 @@ void Runopts::opt_F(const std::string &val)
 	}
 	else
 	{
-		ERR(" : BOOL -F has been set more than once, please check your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : BOOL -F has been set more than once, please check your command parameters.");
 	}
 } // ~Runopts::opt_F_ForwardOnly
 
@@ -836,8 +784,7 @@ void Runopts::opt_R(const std::string &val)
 	}
 	else
 	{
-		ERR(" : BOOL '-R' has been set more than once, please check your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(" : BOOL '-R' has been set more than once, please check your command parameters.");
 	}
 } // ~Runopts::opt_R
 
@@ -845,7 +792,7 @@ void Runopts::opt_h(const std::string &val)
 {
 	about();
 	print_help();
-	exit(0);
+	throw smr_exit_requested("--help");
 } // ~Runopts::opt_h
 
 void Runopts::opt_v(const std::string &val)
@@ -862,8 +809,7 @@ void Runopts::opt_N(const std::string &val)
 	}
 	else
 	{
-		ERR(": BOOL -N has been set more than once, please check your command parameters.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(": BOOL -N has been set more than once, please check your command parameters.");
 	}
 } // ~Runopts::opt_N
 
@@ -895,8 +841,7 @@ void Runopts::opt_threads(const std::string &val)
 
 	if (val.size() == 0)
 	{
-		ERR(msg);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("msg");
 	}
 	//else
 	//{
@@ -929,8 +874,7 @@ void Runopts::opt_thpp(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR(": --thpp [INT:INT] requires 2 integers for number of Read:Processor threads (ex. --thpp 1:1)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(": --thpp [INT:INT] requires 2 integers for number of Read:Processor threads (ex. --thpp 1:1)");
 	}
 
 	std::istringstream strm(val);
@@ -950,8 +894,7 @@ void Runopts::opt_threp(const std::string &val)
 {
 	if (val.size() == 0)
 	{
-		ERR(": --threp [INT:INT] requires 2 integers for number of Read:Processor threads (ex. --threp 1:1)");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(": --threp [INT:INT] requires 2 integers for number of Read:Processor threads (ex. --threp 1:1)");
 	}
 
 	std::istringstream strm(val);
@@ -973,9 +916,7 @@ void Runopts::opt_dbg_put_db(const std::string& val)
 
 void Runopts::opt_default(const std::string& opt)
 {
-	ERR("Option: '", opt, "' is not recognized");
-	print_help();
-	exit(EXIT_FAILURE);
+	throw std::runtime_error("Option: '" + opt + "' is not recognized");
 } // ~Runopts::opt_default
 
   /* Processing task */
@@ -985,8 +926,7 @@ void Runopts::opt_task(const std::string &val)
 
 	if (task_num > 4)
 	{
-		ERR("Option '", OPT_TASK, "' can only take values in range [0..4] Provided value is [", task_num , "'");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("Option '") + OPT_TASK + "' can only take values in range [0..4] Provided value is [" + std::to_string(task_num) + "]");
 	}
 
 	switch (task_num)
@@ -1019,8 +959,7 @@ void Runopts::opt_workdir(const std::string &path)
 	std::stringstream ss;
 	if (path.size() == 0)
 	{
-		ERR("'" , OPT_WORKDIR, "' option takes an argument - a directory path. None was provided.\n", help_workdir);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_WORKDIR + "' option takes an argument - a directory path. None was provided.");
 	}
 	else {
 		workdir = path;
@@ -1031,8 +970,7 @@ void Runopts::opt_workdir(const std::string &path)
 void Runopts::opt_kvdb(const std::string& path) {
 	if (path.size() == 0)
 	{
-		ERR("'" , OPT_KVDB, "' option takes an argument - a directory path. None was provided.\n" , help_kvdb);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_KVDB + "' option takes an argument - a directory path. None was provided.");
 	}
 	else {
 		kvdbdir = path;
@@ -1043,8 +981,7 @@ void Runopts::opt_kvdb(const std::string& path) {
 void Runopts::opt_idxdir(const std::string& path) {
 	if (path.size() == 0)
 	{
-		ERR("'" , OPT_IDXDIR, "' option takes an argument - a directory path. None was provided.\n" , help_kvdb);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_IDXDIR + "' option takes an argument - a directory path. None was provided.");
 	}
 	else {
 		idxdir = path;
@@ -1055,8 +992,7 @@ void Runopts::opt_idxdir(const std::string& path) {
 void Runopts::opt_readb(const std::string& path) {
 	if (path.size() == 0)
 	{
-		ERR("'", OPT_READB, "' option takes an argument - a directory path. None was provided.\n", help_readb);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_READB + "' option takes an argument - a directory path. None was provided.");
 	}
 	else {
 		readb_dir = path;
@@ -1162,8 +1098,7 @@ void Runopts::opt_reads_feed(const std::string& val)
 
 	if (ftype > FEED_TYPE::MAX)
 	{
-		ERR("Option '", OPT_READS_FEED, "' can only take values in range [0..", static_cast<int>(FEED_TYPE::MAX), "] Provided value is ['", val, "'");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("Option '") + OPT_READS_FEED + "' can only take values in range [0.." + std::to_string(static_cast<int>(FEED_TYPE::MAX)) + "] Provided value is ['" + val + "']");
 	}
 
 	feed_type = ftype;
@@ -1263,8 +1198,7 @@ void Runopts::validate_idxdir() {
 	if (!std::filesystem::exists(idxdir)) {
 		bool is_dir_ok = std::filesystem::create_directory(idxdir);
 		if (!is_dir_ok) {
-			ERR("Failed creating IDX directory: [" , std::filesystem::absolute(idxdir) , "]");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Failed creating IDX directory: [" + idxdir.string() + "]");
 		}
 		else {
 			INFO("Created index directory - OK");
@@ -1319,10 +1253,8 @@ void Runopts::validate_kvdbdir()
 					ss << '\t' << subpath.path().filename() << '\n';
 				std::string flist = ss.str();
 
-				WARN("Path: ", std::filesystem::absolute(kvdbdir), " exists with the following content:\n", 
-					flist,
-					"\tPlease, ensure the directory ", std::filesystem::absolute(kvdbdir), " is Empty prior running 'sortmerna'");
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Path: " + std::filesystem::absolute(kvdbdir).string() +
+					" exists and is not empty. Please ensure the directory is Empty prior running 'sortmerna'");
 			}
 		}
 	}
@@ -1332,8 +1264,7 @@ void Runopts::validate_kvdbdir()
 		INFO("Creating KVDB directory: " , std::filesystem::absolute(kvdbdir));
 		bool is_dir_ok = std::filesystem::create_directories(kvdbdir);
 		if (!is_dir_ok) {
-			ERR("Failed creating KVDB directory: " , std::filesystem::absolute(kvdbdir));
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Failed creating KVDB directory: " + std::filesystem::absolute(kvdbdir).string());
 		}
 	}
 } // ~validate_kvdbdir
@@ -1355,8 +1286,7 @@ void Runopts::validate_readb_dir() {
 	if (!std::filesystem::exists(readb_dir)) {
 		bool is_dir_ok = std::filesystem::create_directory(readb_dir);
 		if (!is_dir_ok) {
-			ERR("Failed creating ",SR_DIR," : ", std::filesystem::absolute(readb_dir));
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Failed creating readb directory: " + std::filesystem::absolute(readb_dir).string());
 		}
 		else {
 			INFO("Created ",SR_DIR," - OK");
@@ -1383,8 +1313,7 @@ void Runopts::validate_aligned_pfx() {
 			INFO("Checking output directory: " , std::filesystem::absolute(aligned_pfx.parent_path()));
 			bool is_dir_ok = std::filesystem::create_directories(aligned_pfx.parent_path());
 			if (!is_dir_ok) {
-				ERR("Failed creating output directory: ", aligned_pfx.parent_path().string());
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Failed creating output directory: " + aligned_pfx.parent_path().string());
 			}
 		}
 	}
@@ -1406,8 +1335,7 @@ void Runopts::validate_other_pfx() {
 			INFO("Checking output directory: " , std::filesystem::absolute(other_pfx.parent_path()));
 			bool is_dir_ok = std::filesystem::create_directories(other_pfx.parent_path());
 			if (!is_dir_ok) {
-				ERR("Failed creating output directory: " , other_pfx.parent_path().string());
-				exit(EXIT_FAILURE);
+				throw std::runtime_error("Failed creating output directory: " + other_pfx.parent_path().string());
 			}
 		}
 	}
@@ -1422,8 +1350,7 @@ void Runopts::process(int argc, char**argv, bool dryrun)
 	size_t len = sizeof(size);
 	if (sysctl(sz, namelen, &size, &len, NULL, 0) < 0)
 	{
-		fprintf(stderr, "\n  %sERROR%s: sysctl (main.cpp)\n", RED, COLOFF);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("sysctl failed to get physical memory size");
 	}
 #endif
 
@@ -1433,9 +1360,7 @@ void Runopts::process(int argc, char**argv, bool dryrun)
 
 	if (argc == 1)
 	{
-		ERR("Missing required command options");
-		about();
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Missing required command options");
 	}
 
 	INFO("=== Options processing starts ... ===");
@@ -1479,10 +1404,9 @@ void Runopts::process(int argc, char**argv, bool dryrun)
 		if (!is_opt && flag_count == 0) {
 			std::cout << "Found value: " << *(argv + i) << std::endl;
 			if (i != 0) {
-				ERR("the value provided without a flag/option. Note that e.g. '-", 
-				OPT_REF, "' or '-", OPT_READS,
+				throw std::runtime_error(std::string("the value provided without a flag/option. Note that e.g. '-") +
+				OPT_REF + "' or '-" + OPT_READS +
 				"' have to be used with Each file. See 'sortmerna -h'");
-				exit(EXIT_FAILURE);
 			}
 			continue;
 		}
@@ -1583,8 +1507,7 @@ void Runopts::validate()
 
 	if (is_paired_in && is_paired_out)
 	{
-		ERR("Options '" , OPT_PAIRED_IN , "' and '" , OPT_PAIRED_OUT , "' are mutually exclusive. Please choose one or the other");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("Options '") + OPT_PAIRED_IN + "' and '" + OPT_PAIRED_OUT + "' are mutually exclusive. Please choose one or the other");
 	}
 
 	if (!is_paired) {
@@ -1607,8 +1530,7 @@ void Runopts::validate()
 	}
 
 	if (is_sout && (is_paired_in || is_paired_out)) {
-		ERR("Option '", OPT_SOUT,"' cannot be used when either '", OPT_PAIRED_IN,"' or '", OPT_PAIRED_OUT,"' is specified.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("Option '") + OPT_SOUT + "' cannot be used when either '" + OPT_PAIRED_IN + "' or '" + OPT_PAIRED_OUT + "' is specified.");
 	}
 
 	// Options --paired_in and --paired_out can only be used with FASTA/Q output
@@ -1622,55 +1544,47 @@ void Runopts::validate()
 	// An OTU map can only be constructed with the single best alignment per read
 	if (is_otu_map && !is_best)
 	{
-		ERR("'-", OPT_OTU_MAP, "' cannot be set together with '-", OPT_NO_BEST, "'.\n"
-			"\tThe best alignment is required for constructing an OTU map.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'-") + OPT_OTU_MAP + "' cannot be set together with '-" + OPT_NO_BEST + "'."
+			" The best alignment is required for constructing an OTU map.");
 	}
 
 	if (is_num_alignments && !(is_blast || is_sam || is_fastx))
 	{
-		WARN("'" , OPT_NUM_ALIGNMENTS, 
-			"' [INT] has been set but no output format has been chosen (--blast | --sam | --fastx). Using default '", 
-			OPT_BLAST , "'");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_NUM_ALIGNMENTS +
+			"' [INT] has been set but no output format has been chosen (--blast | --sam | --fastx)");
 	}
 
 	// Check gap extend score < gap open score
 	if (gap_extension > gap_open)
 	{
-		ERR("--gap_ext [INT] must be less than --gap_open [INT].");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--gap_ext [INT] must be less than --gap_open [INT].");
 	}
 
 	// Option --print_all_reads can only be used with Blast-like tabular
 	// and SAM formats (not pairwise)
 	if (is_print_all_reads && is_blast && blastFormat != BlastFormat::TABULAR)
 	{
-		ERR("--print_all_reads [BOOL] can only be used with BLAST-like");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--print_all_reads [BOOL] can only be used with BLAST-like");
 	}
 
 	// Option --min_lis [INT] can only accompany --best [INT]
 	if (is_min_lis && is_num_alignments)
 	{
-		ERR("'" , OPT_MIN_LIS , "' [INT] and '" , OPT_NUM_ALIGNMENTS , "' [INT] cannot be set together.\n");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error(std::string("'") + OPT_MIN_LIS + "' [INT] and '" + OPT_NUM_ALIGNMENTS + "' [INT] cannot be set together.");
 	}
 
 	// Option --mis_lis INT accompanies --best INT, cannot be set alone
 	if (is_min_lis && !is_best)
 	{
-		ERR("--min_lis [INT] must be set together with --best [INT].");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--min_lis [INT] must be set together with --best [INT].");
 	}
 
 	// %id and %coverage can only be used with --otu_map
 	if ((min_id > 0 || min_cov > 0) && !is_otu_map)
 	{
-		ERR("--id [INT] and --coverage [INT] can only be used together with --otu_map.\n"
-			"\tThese two options are used for constructing the OTU map\n"
-			"\tby filtering alignments passing the E-value threshold.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("--id [INT] and --coverage [INT] can only be used together with --otu_map."
+			" These two options are used for constructing the OTU map"
+			" by filtering alignments passing the E-value threshold.");
 	}
 
 	// if neither strand was selected for search, search both

@@ -35,6 +35,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
  * Created: Nov 26, 2017 Sun
  */
 #include <filesystem>
+#include <stdexcept>
 
 // 3rd party
 // #include "rapidjson/writer.h"
@@ -290,9 +291,8 @@ void Read::initScoringMatrix(int8_t match, int8_t mismatch, int8_t score_N)
 void Read::validate(uint64_t& max_read_len) {
 	if (sequence.size() > max_read_len)
 	{
-		ERR("Read ID: ", id, " Header: ", header, " Sequence length: ", sequence.size(), " > ", 
-			max_read_len, " nt \n", "  Please check your reads or contact the authors.");
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Read ID: " + id + " Header: " + header + " Sequence length: " + std::to_string(sequence.size()) + " > " +
+			std::to_string(max_read_len) + " nt. Please check your reads or contact the authors.");
 	}
 	isValid = true;
 } // ~Read::validate

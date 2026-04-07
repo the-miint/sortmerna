@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdarg>
+#include <sys/stat.h>
 
 /* stringification helpers for version macros */
 #define SMR_STRINGIFY2(x) #x
@@ -118,16 +119,60 @@ int smr_last_error_code(const smr_context_t *ctx) {
 
 /* --- Computation --- */
 
+static bool file_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static bool file_is_empty(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return true;
+    return st.st_size == 0;
+}
+
 int smr_run(smr_context_t *ctx,
             const char **ref_paths, int32_t num_refs,
             const char **read_paths, int32_t num_reads,
             smr_output_t **out,
             smr_stats_t *stats) {
-    (void)ref_paths; (void)num_refs;
-    (void)read_paths; (void)num_reads;
-    (void)out; (void)stats;
     if (!ctx) return SMR_ERR_INVALID_CONFIG;
-    set_error(ctx, SMR_ERR_NOT_IMPLEMENTED, "smr_run not yet implemented");
+
+    /* validate inputs */
+    if (!ref_paths || num_refs <= 0) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "ref_paths is NULL or num_refs <= 0");
+        return SMR_ERR_INVALID_CONFIG;
+    }
+    if (!read_paths || num_reads <= 0) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "read_paths is NULL or num_reads <= 0");
+        return SMR_ERR_INVALID_CONFIG;
+    }
+
+    /* validate file existence */
+    for (int32_t i = 0; i < num_refs; i++) {
+        if (!ref_paths[i] || !file_exists(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file not found: %s",
+                      ref_paths[i] ? ref_paths[i] : "(null)");
+            return SMR_ERR_IO;
+        }
+        if (file_is_empty(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file is empty: %s", ref_paths[i]);
+            return SMR_ERR_IO;
+        }
+    }
+    for (int32_t i = 0; i < num_reads; i++) {
+        if (!read_paths[i] || !file_exists(read_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reads file not found: %s",
+                      read_paths[i] ? read_paths[i] : "(null)");
+            return SMR_ERR_IO;
+        }
+        if (file_is_empty(read_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reads file is empty: %s", read_paths[i]);
+            return SMR_ERR_IO;
+        }
+    }
+
+    (void)out; (void)stats;
+    set_error(ctx, SMR_ERR_NOT_IMPLEMENTED, "smr_run pipeline not yet implemented");
     return SMR_ERR_NOT_IMPLEMENTED;
 }
 

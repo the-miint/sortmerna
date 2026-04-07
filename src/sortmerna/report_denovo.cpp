@@ -30,6 +30,8 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
               biocodz          biocodz@protonmail.com
 */
 
+#include <stdexcept>
+
 #include "report_denovo.h"
 #include "common.hpp"
 #include "options.hpp"
@@ -113,8 +115,7 @@ void ReportDenovo::append(const uint32_t& id, std::vector<Read>& reads, Runopts&
 					continue; // ignore a non-aligned singleton
 			}
 			else {
-				ERR("min number of output files is 1, max number of output files is 4. The current value is ", base.num_out);
-				exit(1);
+				throw std::runtime_error("min number of output files is 1, max number of output files is 4. The current value is " + std::to_string(base.num_out));
 			}
 
 			if (is_zip)

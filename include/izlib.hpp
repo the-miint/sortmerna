@@ -84,6 +84,7 @@ private:
 	size_t buf_in_size;
 	size_t buf_out_size;
 	unsigned z_in_num; // number of reads accumulated in IN buffer. For debugging.
+	bool strm_active = false; // tracks whether strm needs inflateEnd/deflateEnd
 	std::vector<unsigned char> z_in; // IN buffer
 	std::vector<unsigned char> z_out; // OUT buffer
 

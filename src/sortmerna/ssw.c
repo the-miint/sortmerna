@@ -609,7 +609,6 @@ cigar* banded_sw(const int8_t* ref,
 			kroundup32(s2);
 			if (s2 < 0) {
 				fprintf(stderr, "Alignment score and position are not consensus.\n");
-				exit(1);
 				free(h_b); //jenya
 				h_b = NULL;
 				free(e_b); //jenya
@@ -710,8 +709,9 @@ cigar* banded_sw(const int8_t* ref,
 			f = 2;	// D
 			break;
 		default:
-			fprintf(stderr, "Trace back error: %d.\n", direction_line[temp1 - 1]); exit(1);
-			return 0;
+			fprintf(stderr, "Trace back error: %d.\n", direction_line[temp1 - 1]);
+			free(c);
+			return NULL;
 		}
 		if (f == max) ++e;
 		else {
@@ -790,7 +790,7 @@ s_profile* ssw_init(const int8_t* read, const int32_t readLen, const int8_t* mat
 	if (p == NULL)
 	{
 		fprintf(stderr, "    %sERROR%s: could not allocate memory for profile (ssw.c)\n", "\033[0;31m", "\033[0m");
-		exit(EXIT_FAILURE);
+		return NULL;
 	}
 	p->profile_byte = 0;
 	p->profile_word = 0;
@@ -869,7 +869,8 @@ s_align* ssw_align(
 		}
 		else if (bests[0].score == 255) {
 			fprintf(stderr, "Please set 2 to the score_size parameter of the function ssw_init, otherwise the alignment results will be incorrect.\n");
-			return 0;
+			free(r);
+			return NULL;
 		}
 	}
 	else if (prof->profile_word) {
@@ -878,7 +879,8 @@ s_align* ssw_align(
 	}
 	else {
 		fprintf(stderr, "Please call the function ssw_init before ssw_align.\n");
-		return 0;
+		free(r);
+		return NULL;
 	}
 	r->score1 = bests[0].score;
 	r->ref_end1 = bests[0].ref;

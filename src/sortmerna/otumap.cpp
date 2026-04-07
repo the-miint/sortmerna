@@ -35,6 +35,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <thread>
 #include <filesystem>
 #include <cmath>  // std::floor
+#include <stdexcept>
 
 #include "common.hpp"
 #include "otumap.h"
@@ -77,8 +78,7 @@ void OtuMap::write()
 		std::ofstream ofs;
 		ofs.open(fmap);
 		if (!ofs.is_open()) {
-			ERR("Failed to open: ", fmap);
-			exit(1);
+			throw std::runtime_error("Failed to open: " + fmap.string());
 		}
 
 		for (auto const& amap : mapv) {

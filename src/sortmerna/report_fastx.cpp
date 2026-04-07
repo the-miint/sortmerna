@@ -31,6 +31,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <filesystem>
+#include <stdexcept>
 
 #include "common.hpp"
 #include "report_fastx.h"
@@ -61,11 +62,10 @@ void ReportFastx::append(const uint32_t& id, std::vector<Read>& reads, const Run
 			&& (reads[0].read_num != reads[1].read_num
 				|| reads[0].readfile_idx == reads[1].readfile_idx))
 		{
-			ERR("Paired validation failed: reads[0].id= ", reads[0].id, " reads[0].read_num = ",
-				reads[0].read_num, " reads[0].readfile_idx= ", reads[0].readfile_idx,
-				" reads[1].id=", reads[1].id, " reads[1].read_num = ", reads[1].read_num,
-				" reads[1].readfile_idx = ", reads[1].readfile_idx);
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Paired validation failed: reads[0].id= " + reads[0].id + " reads[0].read_num = " +
+				std::to_string(reads[0].read_num) + " reads[0].readfile_idx= " + std::to_string(reads[0].readfile_idx) +
+				" reads[1].id=" + reads[1].id + " reads[1].read_num = " + std::to_string(reads[1].read_num) +
+				" reads[1].readfile_idx = " + std::to_string(reads[1].readfile_idx));
 		}
 
 		if (!reads[0].is_hit && !reads[1].is_hit)
@@ -122,8 +122,7 @@ void ReportFastx::append(const uint32_t& id, std::vector<Read>& reads, const Run
 					continue; // ignore a non-aligned singleton
 			}
 			else {
-				ERR("min number of output files is 1, max number of output files is 4. The current value is ", base.num_out);
-				exit(1);
+				throw std::runtime_error("min number of output files is 1, max number of output files is 4. The current value is " + std::to_string(base.num_out));
 			}
 
 			if (is_zip)

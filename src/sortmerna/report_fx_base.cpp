@@ -31,6 +31,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <fstream>
+#include <stdexcept>
 
 #include "report_fx_base.h"
 #include "common.hpp"
@@ -84,8 +85,7 @@ void ReportFxBase::init(Readfeed& readfeed,
 					sfx1 = j == 0 ? "_paired" : "_singleton";
 				}
 				else { // should never happen
-					ERR("num_out = 2 implies either 'out2' or 'sout'");
-					exit(1);
+					throw std::runtime_error("num_out = 2 implies either 'out2' or 'sout'");
 				}
 			}
 
@@ -157,8 +157,7 @@ void ReportFxBase::validate_out_type(Runopts& opts)
 	std::cout << ss.str();
 
 	if (is_na) {
-		ERR("invalid combination of output options: rule '", rule, "': '", rules[2], "' violated");
-		exit(1);
+		throw std::runtime_error("invalid combination of output options: rule '" + std::to_string(rule) + "': '" + rules[2] + "' violated");
 	}
 }
 
@@ -195,8 +194,7 @@ void ReportFxBase::write_a_read(std::ostream& strm, Read& read, const int& dbg)
 				num_miss.fetch_add(1, std::memory_order_relaxed);
 		}
 		catch (const std::exception& e) {
-			ERR("failed writing to stream. Num reads processed so far: ", num_reads, " Current read id: ", read.id, " - ", e.what());
-			exit(1);
+			throw std::runtime_error("failed writing to stream. Num reads processed so far: " + std::to_string(num_reads.load()) + " Current read id: " + read.id + " - " + e.what());
 		}
 	}
 	else {

@@ -70,6 +70,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <ios>
 #include <vector>
 #include <cmath>  // log2
+#include <stdexcept>
 
 #include "sls_alignment_evaluer.hpp" // ../alp/
 
@@ -127,8 +128,7 @@ void Refstats::load(Runopts& opts, Readstats& readstats)
 		if (!stats.good())
 		{
 			// should never come here. Index is built and validated prior this call.
-			ERR("Cannot open the index file [", opts.indexfiles[index_num].second, ".stats]");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Cannot open the index file [" + opts.indexfiles[index_num].second + ".stats]");
 		}
 
 		// read the file size for file used to build the index

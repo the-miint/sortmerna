@@ -31,6 +31,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <fstream>
+#include <stdexcept>
 #include <thread>
 
 #include "summary.hpp"
@@ -64,8 +65,7 @@ void Summary::write(Refstats& refstats, Readstats& readstats, Runopts& opts)
 	INFO("Using summary file: ", f_log.generic_string());
 	ofs.open(f_log, std::ofstream::binary | std::ofstream::out);
 	if (!ofs.is_open()) {
-		ERR("Failed opening file ", f_log);
-		exit(EXIT_FAILURE);
+		throw std::runtime_error("Failed opening file " + f_log.string());
 	}
 
 	cmd = opts.cmdline;

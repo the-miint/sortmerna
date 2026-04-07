@@ -38,6 +38,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <locale>
 #include <iomanip> // output formatting
+#include <stdexcept>
 
 #include "paralleltraversal.hpp"
 #include "kseq.h"
@@ -152,9 +153,9 @@ void traverse
 					std::string id = read.id;
 					bool is03 = read.is03;
 					bool is04 = read.is04;
-					ERR("lookup index: ", keyf, " is larger than lookup_tbl.size: ", vsize, 
-						" Index: ", idxn, " Part: ", idxp, " Read.id: ", id, " Read.is03: ", is03, " Read.is04: ", is04, " Aborting..");
-					exit(EXIT_FAILURE);
+					throw std::runtime_error("lookup index: " + std::to_string(keyf) + " is larger than lookup_tbl.size: " + std::to_string(vsize) +
+						" Index: " + std::to_string(idxn) + " Part: " + std::to_string(idxp) + " Read.id: " + id +
+						" Read.is03: " + std::to_string(is03) + " Read.is04: " + std::to_string(is04) + " Aborting..");
 				}
 
 				// do traversal if the exact half window exists in the burst trie
@@ -205,10 +206,10 @@ void traverse
 						std::string id = read.id;
 						bool is03 = read.is03;
 						bool is04 = read.is04;
-						ERR("Thread: ", std::this_thread::get_id(), " lookup index: ", keyr, 
-							" is larger than lookup_tbl.size: ", vsize, " Index: ", idxn, " Part: ", idxp, 
-							" Read.id: ", id, " Read.is03: ", is03, " Read.is04: ", is04, " Aborting...");
-						exit(EXIT_FAILURE);
+						throw std::runtime_error("lookup index: " + std::to_string(keyr) +
+							" is larger than lookup_tbl.size: " + std::to_string(vsize) + " Index: " + std::to_string(idxn) +
+							" Part: " + std::to_string(idxp) + " Read.id: " + id +
+							" Read.is03: " + std::to_string(is03) + " Read.is04: " + std::to_string(is04) + " Aborting...");
 					}
 
 					// continue subsearch (1)(b)
