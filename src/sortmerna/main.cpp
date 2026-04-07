@@ -55,7 +55,12 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 /*
 *  main entry of the sortmerna application
+*
+*  Guard: main.cpp is NOT part of the smr_objs library target -- it is only
+*  compiled into the sortmerna executable. This guard is a safety net in case
+*  main.cpp is ever added to a library target by mistake.
 */
+#ifndef SMR_NO_MAIN
 int main(int argc, char** argv)
 {
 	bool dryrun = false;
@@ -113,3 +118,4 @@ int main(int argc, char** argv)
 	}
 	return 0;
 }//~main()
+#endif /* SMR_NO_MAIN */

@@ -1,0 +1,36 @@
+ Command:
+    sortmerna --ref data/test_ref.fasta --reads data/test_read.fasta --workdir /tmp/smr_golden_tiny --aligned /tmp/smr_golden_tiny/aligned --other /tmp/smr_golden_tiny/other --fastx --blast 1 cigar qcov --sam --log --num_alignments 1 --threads 1 
+
+ Process pid = 
+
+ Parameters summary: 
+    Reference file: data/test_ref.fasta
+        Seed length = 18
+        Pass 1 = 18, Pass 2 = 9, Pass 3 = 3
+        Gumbel lambda = 0.589916
+        Gumbel K = 0.324318
+        Minimal SW score based on E-value = 22
+    Number of seeds = 2
+    Edges = 4
+    SW match = 2
+    SW mismatch = -3
+    SW gap open penalty = 5
+    SW gap extend penalty = 2
+    SW ambiguous nucleotide = -3
+    SQ tags are not output
+    Number of alignment processing threads = 1
+    Reads file: data/test_read.fasta
+    Total reads = 1
+
+ Results:
+    Total reads passing E-value threshold = 1 (100.00)
+    Total reads failing E-value threshold = 0 (0.00)
+    Minimum read length = 1487
+    Maximum read length = 1487
+    Mean read length    = 1487
+
+ Coverage by database:
+    data/test_ref.fasta		100.00
+
+ Tue Apr  7 07:05:41 2026
+
