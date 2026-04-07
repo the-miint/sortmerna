@@ -17,6 +17,26 @@ void smr_config_init(smr_config_t *cfg) {
     if (!cfg) return;
     memset(cfg, 0, sizeof(*cfg));
     cfg->struct_size = sizeof(*cfg);
+
+    /* threading */
+    cfg->num_threads = 2;          /* Runopts::num_proc_thread */
+
+    /* alignment scoring -- matches Runopts defaults */
+    cfg->match    =  2;            /* Runopts::match */
+    cfg->mismatch = -3;            /* Runopts::mismatch */
+    cfg->gap_open =  5;            /* Runopts::gap_open */
+    cfg->gap_ext  =  2;            /* Runopts::gap_extension */
+    cfg->score_N  =  0;            /* Runopts::score_N */
+    cfg->evalue   = -1.0;          /* Runopts::evalue (-1 = unset) */
+
+    /* indexing */
+    cfg->seed_win_len   = 18;      /* Runopts::seed_win_len */
+    cfg->num_alignments =  1;      /* Runopts::num_alignments */
+
+    /* boolean flags */
+    cfg->best = 1;                 /* Runopts::is_best */
+    /* paired, forward_only, reverse_only, full_search default to 0 (from memset) */
+    /* fastx, sam, blast, otu_map, denovo default to 0 (from memset) */
 }
 
 /* --- Context lifecycle --- */

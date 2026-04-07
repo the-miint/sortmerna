@@ -47,18 +47,22 @@ typedef struct smr_config {
     /* Threading */
     int32_t num_threads;
 
-    /* Alignment parameters */
+    /* Alignment scoring parameters.
+     * gap_open and gap_ext are int32_t here; Runopts uses long internally.
+     * Realistic values are small positive integers so no truncation risk. */
     int32_t match;
     int32_t mismatch;
     int32_t gap_open;
     int32_t gap_ext;
+    int32_t score_N;        /* penalty for ambiguous bases (N) */
     double  evalue;
     uint32_t seed_win_len;
     uint32_t num_alignments;
 
     /* Boolean flags (int32_t per guidance, not bool) */
     int32_t best;
-    int32_t paired;
+    int32_t paired;         /* sets Runopts::is_paired; paired_in/paired_out
+                               are controlled by output format, not this flag */
     int32_t forward_only;
     int32_t reverse_only;
     int32_t full_search;
