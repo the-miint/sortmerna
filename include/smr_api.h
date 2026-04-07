@@ -77,7 +77,9 @@ typedef struct smr_config {
     /* Paths (caller-owned, must outlive context) */
     const char *workdir;
 
-    /* Logging callback (optional, may be NULL for silent operation) */
+    /* Logging callback (optional, may be NULL for silent operation).
+     * log_user_data is copied by value into the context; the pointee
+     * must outlive the context (same lifetime contract as workdir). */
     void (*log_callback)(int level, const char *msg, void *user_data);
     void *log_user_data;
 
@@ -100,6 +102,7 @@ void           smr_ctx_destroy(smr_context_t *ctx);
 
 const char *smr_strerror(int code);
 const char *smr_last_error(const smr_context_t *ctx);
+int         smr_last_error_code(const smr_context_t *ctx);
 
 /* --------------------------------------------------------------------
  * Computation
@@ -119,7 +122,7 @@ const char *smr_last_error(const smr_context_t *ctx);
 typedef struct smr_output {
     uint64_t    num_reads;
     uint64_t    num_aligned;
-    const char **read_ids;     /* library-owned strings */
+    const char **read_ids;     /* library-owned; smr_output_free casts away const */
     int32_t    *aligned;       /* 0 or 1 per read */
     int32_t    *ref_index;     /* -1 if unaligned */
     double     *e_value;
@@ -127,7 +130,8 @@ typedef struct smr_output {
     double     *coverage;      /* query coverage, 0-100 */
     int32_t    *ref_start;     /* 1-based start on reference */
     int32_t    *ref_end;       /* 1-based end on reference */
-    const char **cigar;        /* CIGAR string, NULL if unaligned */
+    const char **cigar;        /* CIGAR string, NULL if unaligned;
+                                  library-owned, smr_output_free casts away const */
 } smr_output_t;
 
 typedef struct smr_stats {

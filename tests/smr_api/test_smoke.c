@@ -134,6 +134,114 @@ TEST(test_config_explicit_width_types) {
     ASSERT_EQ_SZ(sizeof(((smr_config_t *)0)->num_alignments), sizeof(uint32_t));
 }
 
+/* ---- Phase 2: Context lifecycle and error reporting ---- */
+
+static void test_log_cb(int level, const char *msg, void *user_data) {
+    (void)level; (void)msg;
+    int *counter = (int *)user_data;
+    if (counter) (*counter)++;
+}
+
+TEST(test_ctx_create_returns_non_null) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_ctx_create_null_config_returns_null) {
+    smr_context_t *ctx = smr_ctx_create(NULL);
+    ASSERT_NULL(ctx);
+}
+
+TEST(test_ctx_create_bad_struct_size_returns_null) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.struct_size = 0;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NULL(ctx);
+}
+
+TEST(test_ctx_create_multiple_independent) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *a = smr_ctx_create(&cfg);
+    smr_context_t *b = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(a);
+    ASSERT_NOT_NULL(b);
+    ASSERT_TRUE(a != b);
+    smr_ctx_destroy(a);
+    smr_ctx_destroy(b);
+}
+
+TEST(test_ctx_last_error_empty_initially) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *err = smr_last_error(ctx);
+    ASSERT_NOT_NULL(err);
+    ASSERT_EQ_INT((int)err[0], 0); /* empty string */
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_strerror_success_msg) {
+    const char *s = smr_strerror(SMR_OK);
+    ASSERT_STR_EQ(s, "Success");
+}
+
+TEST(test_strerror_invalid_config_msg) {
+    const char *s = smr_strerror(SMR_ERR_INVALID_CONFIG);
+    ASSERT_NOT_NULL(s);
+    ASSERT_TRUE(s[0] != '\0');
+}
+
+TEST(test_strerror_unknown_code) {
+    const char *s = smr_strerror(99999);
+    ASSERT_NOT_NULL(s);
+    ASSERT_STR_EQ(s, "Unknown error");
+}
+
+TEST(test_log_callback_receives_messages) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    int count = 0;
+    cfg.log_callback = test_log_cb;
+    cfg.log_user_data = &count;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    ASSERT_TRUE(count > 0);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_last_error_set_after_smr_run) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    int rc = smr_run(ctx, NULL, 0, NULL, 0, NULL, NULL);
+    ASSERT_EQ_INT(rc, SMR_ERR_NOT_IMPLEMENTED);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_NOT_IMPLEMENTED);
+    const char *err = smr_last_error(ctx);
+    ASSERT_NOT_NULL(err);
+    ASSERT_TRUE(err[0] != '\0');
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_last_error_code_initially_zero) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_OK);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_last_error_code_null_ctx) {
+    ASSERT_EQ_INT(smr_last_error_code(NULL), SMR_ERR_INVALID_CONFIG);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -157,4 +265,17 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_config_default_booleans_off);
     RUN_TEST(test_config_boolean_type_is_int32);
     RUN_TEST(test_config_explicit_width_types);
+    /* Phase 2 */
+    RUN_TEST(test_ctx_create_returns_non_null);
+    RUN_TEST(test_ctx_create_null_config_returns_null);
+    RUN_TEST(test_ctx_create_bad_struct_size_returns_null);
+    RUN_TEST(test_ctx_create_multiple_independent);
+    RUN_TEST(test_ctx_last_error_empty_initially);
+    RUN_TEST(test_strerror_success_msg);
+    RUN_TEST(test_strerror_invalid_config_msg);
+    RUN_TEST(test_strerror_unknown_code);
+    RUN_TEST(test_log_callback_receives_messages);
+    RUN_TEST(test_last_error_set_after_smr_run);
+    RUN_TEST(test_last_error_code_initially_zero);
+    RUN_TEST(test_last_error_code_null_ctx);
 TEST_MAIN_END()
