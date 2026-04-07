@@ -43,10 +43,8 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 using namespace std;
 
-extern int total_num_trie_nodes;
-extern size_t size_of_all_buckets;
-extern int total_num_buckets;
-
-void traverse_trie( NodeElement* root, int depth);
+/* Legacy header -- extern declarations removed in Phase 3.
+ * Variables are now encapsulated in IndexBuildState (indexdb.cpp).
+ * This header is not included by any compiled source file. */
 
 #endif

@@ -242,6 +242,24 @@ TEST(test_last_error_code_null_ctx) {
     ASSERT_EQ_INT(smr_last_error_code(NULL), SMR_ERR_INVALID_CONFIG);
 }
 
+/* ---- Phase 3: Global state encapsulation ---- */
+
+TEST(test_two_contexts_create_destroy) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *a = smr_ctx_create(&cfg);
+    smr_context_t *b = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(a);
+    ASSERT_NOT_NULL(b);
+    /* destroy in reverse order to test independence */
+    smr_ctx_destroy(b);
+    smr_ctx_destroy(a);
+    /* re-create after destroy to test reuse */
+    smr_context_t *c = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(c);
+    smr_ctx_destroy(c);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -278,4 +296,6 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_last_error_set_after_smr_run);
     RUN_TEST(test_last_error_code_initially_zero);
     RUN_TEST(test_last_error_code_null_ctx);
+    /* Phase 3 */
+    RUN_TEST(test_two_contexts_create_destroy);
 TEST_MAIN_END()
