@@ -3,11 +3,9 @@
  *
  * Public header for the SortMeRNA library. The library never calls exit(),
  * abort(), or assert(), and suppresses stdout/stderr output (routing
- * through the log callback instead). Log callback routing is thread-safe
- * via thread-locals. stdout/stderr suppression uses process-wide dup2 as
- * a secondary defense; concurrent smr_run() calls from multiple threads
- * should use independent contexts but may interfere at the fd level.
- * For full thread safety, ensure only one smr_run() is active at a time.
+ * through the log callback instead). smr_run() is serialized by a
+ * process-level mutex, making it safe to call from multiple threads
+ * with independent contexts.
  */
 #ifndef SMR_API_H
 #define SMR_API_H

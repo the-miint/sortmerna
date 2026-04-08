@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <atomic>
+#include <mutex>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -37,6 +38,11 @@
 
 /* process-level atomic counter for unique workdir names across all contexts */
 static std::atomic<int> g_run_counter{0};
+
+/* process-level mutex serializing smr_run calls. Required because the
+ * dup2-based fd suppression is process-wide and not thread-safe. The
+ * mutex is uncontended in the common single-threaded case. */
+static std::mutex g_run_mutex;
 
 /* thread-local log routing defined in smr_log.cpp (part of smr_objs),
  * declared in common.hpp. Set by smr_run(), read by INFO/ERR/WARN macros. */
@@ -360,6 +366,9 @@ int smr_run(smr_context_t *ctx,
         }
     }
 
+    /* serialize smr_run calls — dup2 fd suppression is process-wide */
+    std::lock_guard<std::mutex> run_lock(g_run_mutex);
+
     auto wall_start = std::chrono::high_resolution_clock::now();
 
     /* create unique temporary workdir using process-level atomic counter */
@@ -374,10 +383,12 @@ int smr_run(smr_context_t *ctx,
         workdir = ss.str();
     }
 
-    /* RAII guards — destructor order is reverse of declaration:
-     * 1. LogRouteGuard: set thread-local callback (cleared first on exit)
-     * 2. FdRedirectGuard: suppress stdout/stderr via dup2 (restored after log clear)
-     * 3. WorkdirGuard: clean temp workdir (last to clean up) */
+    /* RAII guards — C++ destroys in reverse declaration order, so:
+     *   declared first:  WorkdirGuard  → destroyed last  (cleanup temp dir)
+     *   declared second: LogRouteGuard → destroyed second (clear thread-local)
+     *   declared third:  FdRedirectGuard → destroyed first (restore fds)
+     * This means fds are restored while log routing is still active,
+     * so any teardown logging still has somewhere to go. */
     WorkdirGuard wdguard(workdir, workdir_is_temp);
     LogRouteGuard loguard(ctx->config.log_callback, ctx->config.log_user_data);
     FdRedirectGuard fdguard;
