@@ -116,7 +116,10 @@ int         smr_last_error_code(const smr_context_t *ctx);
  * when done; passing NULL is safe. The output is independent of the context
  * and remains valid after smr_ctx_destroy().
  *
- * All arrays are indexed [0 .. num_reads-1]. One entry per input read.
+ * num_reads and num_aligned are always populated.
+ * Per-read array fields (read_ids, aligned, e_value, etc.) are reserved
+ * for future implementation and will be NULL until then. Check for NULL
+ * before accessing. When populated, arrays are indexed [0 .. num_reads-1].
  * Coordinates (ref_start, ref_end) are 1-based, matching BLAST/SAM convention.
  */
 typedef struct smr_output {

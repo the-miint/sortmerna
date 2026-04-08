@@ -9,10 +9,15 @@ target_include_directories(test_smr_api
     PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CONCURRENTQUEUE_HOME}
 )
 
 target_link_libraries(test_smr_api
     smr_api
+    build_version
+    alp
+    $<TARGET_OBJECTS:cmph>
+    ${CMAKE_DL_LIBS}
 )
 
 # Wire golden data directory as a compile definition

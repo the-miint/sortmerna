@@ -357,6 +357,100 @@ TEST(test_run_bad_input_does_not_crash) {
     smr_ctx_destroy(ctx);
 }
 
+/* ---- Phase 5: smr_run computation ---- */
+
+TEST(test_run_tiny_aligned_count) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_EQ_U64(out->num_aligned, 1);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_tiny_stats) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_U64(stats.total_reads, 1);
+    ASSERT_EQ_U64(stats.total_aligned, 1);
+    ASSERT_TRUE(stats.min_read_len > 0);
+    ASSERT_TRUE(stats.max_read_len > 0);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_small_aligned_count) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 6);
+    ASSERT_EQ_U64(out->num_aligned, 4);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_output_free_after_run) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    smr_output_free(out);
+    /* if we got here, no crash */
+    ASSERT_TRUE(1);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_multiple_sequential) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out1 = NULL;
+    smr_output_t *out2 = NULL;
+    smr_stats_t stats;
+    int rc1 = smr_run(ctx, refs, 1, reads, 1, &out1, &stats);
+    int rc2 = smr_run(ctx, refs, 1, reads, 1, &out2, &stats);
+    ASSERT_EQ_INT(rc1, SMR_OK);
+    ASSERT_EQ_INT(rc2, SMR_OK);
+    ASSERT_EQ_U64(out1->num_aligned, out2->num_aligned);
+    smr_output_free(out1);
+    smr_output_free(out2);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -403,4 +497,10 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_run_empty_ref_returns_error);
     RUN_TEST(test_last_error_descriptive_after_bad_input);
     RUN_TEST(test_run_bad_input_does_not_crash);
+    /* Phase 5 */
+    RUN_TEST(test_run_tiny_aligned_count);
+    RUN_TEST(test_run_tiny_stats);
+    RUN_TEST(test_run_small_aligned_count);
+    RUN_TEST(test_run_output_free_after_run);
+    RUN_TEST(test_run_multiple_sequential);
 TEST_MAIN_END()

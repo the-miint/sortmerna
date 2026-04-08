@@ -4,15 +4,38 @@
 
 #include "smr_api.h"
 #include "version.h"
+#include "options.hpp"
+#include "index.hpp"
+#include "kvdb.hpp"
+#include "readfeed.hpp"
+#include "readstats.hpp"
+#include "refstats.hpp"
+#include "processor.hpp"
+#include "output.hpp"
+#include "summary.hpp"
+#include "otumap.h"
+
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdarg>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <stdexcept>
 #include <sys/stat.h>
+#include <unistd.h>
 
 /* stringification helpers for version macros */
 #define SMR_STRINGIFY2(x) #x
 #define SMR_STRINGIFY(x) SMR_STRINGIFY2(x)
+
+/* process-level atomic counter for unique workdir names across all contexts */
+static std::atomic<int> g_run_counter{0};
 
 /* --- Internal context definition (opaque to callers) --- */
 
@@ -41,6 +64,22 @@ static void ctx_log(const smr_context *ctx, int level, const char *fmt, ...) {
     ctx->config.log_callback(level, buf, ctx->config.log_user_data);
 }
 
+/* RAII guard for temp workdir cleanup */
+class WorkdirGuard {
+    std::string path_;
+    bool owned_;
+public:
+    WorkdirGuard(const std::string &path, bool owned)
+        : path_(path), owned_(owned) {}
+    ~WorkdirGuard() {
+        if (owned_) {
+            std::error_code ec;
+            std::filesystem::remove_all(path_, ec);
+        }
+    }
+    void release() { owned_ = false; }
+};
+
 /* --- Configuration --- */
 
 void smr_config_init(smr_config_t *cfg) {
@@ -65,8 +104,6 @@ void smr_config_init(smr_config_t *cfg) {
 
     /* boolean flags */
     cfg->best = 1;                 /* Runopts::is_best */
-    /* paired, forward_only, reverse_only, full_search default to 0 (from memset) */
-    /* fastx, sam, blast, otu_map, denovo default to 0 (from memset) */
 }
 
 /* --- Context lifecycle --- */
@@ -117,7 +154,7 @@ int smr_last_error_code(const smr_context_t *ctx) {
     return ctx->last_error_code;
 }
 
-/* --- Computation --- */
+/* --- Computation helpers --- */
 
 static bool file_exists(const char *path) {
     struct stat st;
@@ -128,6 +165,114 @@ static bool file_is_empty(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) return true;
     return st.st_size == 0;
+}
+
+/*
+ * Build an argv vector from smr_config_t + input paths.
+ * Always emits all parameters unconditionally to avoid coupling
+ * with Runopts internal defaults.
+ */
+static std::vector<std::string> build_argv(
+    const smr_config_t &cfg,
+    const char **ref_paths, int32_t num_refs,
+    const char **read_paths, int32_t num_reads,
+    const std::string &workdir)
+{
+    std::vector<std::string> args;
+    args.push_back("sortmerna");
+
+    for (int32_t i = 0; i < num_refs; i++) {
+        args.push_back("--ref");
+        args.push_back(ref_paths[i]);
+    }
+    for (int32_t i = 0; i < num_reads; i++) {
+        args.push_back("--reads");
+        args.push_back(read_paths[i]);
+    }
+
+    args.push_back("--workdir");
+    args.push_back(workdir);
+    args.push_back("--aligned");
+    args.push_back(workdir + "/aligned");
+    args.push_back("--other");
+    args.push_back(workdir + "/other");
+
+    args.push_back("--threads");
+    args.push_back(std::to_string(cfg.num_threads));
+    args.push_back("--num_alignments");
+    args.push_back(std::to_string(cfg.num_alignments));
+
+    /* always produce BLAST output for structured result extraction */
+    args.push_back("--blast");
+    args.push_back("1 cigar qcov");
+    args.push_back("--fastx");
+
+    /* always emit all scoring parameters */
+    args.push_back("--match");
+    args.push_back(std::to_string(cfg.match));
+    args.push_back("--mismatch");
+    args.push_back(std::to_string(cfg.mismatch));
+    args.push_back("--gap_open");
+    args.push_back(std::to_string(cfg.gap_open));
+    args.push_back("--gap_ext");
+    args.push_back(std::to_string(cfg.gap_ext));
+    args.push_back("-N");
+    args.push_back(std::to_string(cfg.score_N));
+    args.push_back("-L");
+    args.push_back(std::to_string(cfg.seed_win_len));
+
+    if (cfg.evalue >= 0.0) {
+        args.push_back("-e");
+        args.push_back(std::to_string(cfg.evalue));
+    }
+
+    if (cfg.forward_only) args.push_back("-F");
+    if (cfg.reverse_only) args.push_back("-R");
+    if (!cfg.best) args.push_back("--no-best");
+    if (cfg.full_search) args.push_back("--full_search");
+    if (cfg.paired) args.push_back("--paired_in");
+
+    return args;
+}
+
+/*
+ * Find an output file trying multiple extensions (.fa, .fasta, .fq, .fastq).
+ * Returns empty string if none found.
+ */
+static std::string find_output_file(const std::string &prefix) {
+    static const char* exts[] = { ".fa", ".fasta", ".fq", ".fastq" };
+    for (auto ext : exts) {
+        std::string path = prefix + ext;
+        if (file_exists(path.c_str())) return path;
+    }
+    return "";
+}
+
+/*
+ * Count non-empty lines in a file.
+ */
+static uint64_t count_lines(const std::string &path) {
+    std::ifstream ifs(path);
+    uint64_t count = 0;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (!line.empty()) count++;
+    }
+    return count;
+}
+
+/*
+ * Count sequences in a FASTA/FASTQ file by counting header lines.
+ */
+static uint64_t count_seqs(const std::string &path) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) return 0;
+    uint64_t count = 0;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (!line.empty() && (line[0] == '>' || line[0] == '@')) count++;
+    }
+    return count;
 }
 
 int smr_run(smr_context_t *ctx,
@@ -171,14 +316,125 @@ int smr_run(smr_context_t *ctx,
         }
     }
 
-    (void)out; (void)stats;
-    set_error(ctx, SMR_ERR_NOT_IMPLEMENTED, "smr_run pipeline not yet implemented");
-    return SMR_ERR_NOT_IMPLEMENTED;
+    auto wall_start = std::chrono::high_resolution_clock::now();
+
+    /* create unique temporary workdir using process-level atomic counter */
+    std::string workdir;
+    bool workdir_is_temp = (ctx->config.workdir == nullptr);
+    if (!workdir_is_temp) {
+        workdir = ctx->config.workdir;
+    } else {
+        int run_id = g_run_counter.fetch_add(1);
+        std::ostringstream ss;
+        ss << "/tmp/smr_api_" << getpid() << "_" << run_id;
+        workdir = ss.str();
+    }
+
+    /* RAII cleanup for temp workdir — handles all exit paths including exceptions */
+    WorkdirGuard wdguard(workdir, workdir_is_temp);
+
+    try {
+        /* build argv and construct Runopts */
+        auto args = build_argv(ctx->config, ref_paths, num_refs, read_paths, num_reads, workdir);
+        std::vector<char*> argv_ptrs;
+        for (auto &a : args) argv_ptrs.push_back(const_cast<char*>(a.c_str()));
+        argv_ptrs.push_back(nullptr);
+
+        bool dryrun = false;
+        Runopts opts(static_cast<int>(argv_ptrs.size() - 1), argv_ptrs.data(), dryrun);
+
+        ctx_log(ctx, SMR_LOG_INFO, "pipeline starting: %d refs, %d reads", num_refs, num_reads);
+
+        /* run the alignment pipeline (same as main.cpp) */
+        Index index(opts);
+
+        KeyValueDatabase kvdb(opts.kvdbdir.string());
+        Readfeed readfeed(opts.feed_type, opts.readfiles, opts.num_proc_thread, opts.readb_dir, opts.is_paired);
+        Readstats readstats(readfeed.num_reads_tot, readfeed.length_all,
+                            readfeed.min_read_len, readfeed.max_read_len, kvdb, opts);
+
+        /* align + report */
+        align(readfeed, readstats, index, kvdb, opts);
+        writeSummary(readstats, opts);
+        writeReports(readfeed, readstats, kvdb, opts);
+
+        ctx_log(ctx, SMR_LOG_INFO, "pipeline complete");
+
+        /* populate stats from Readstats (authoritative source) */
+        if (stats) {
+            memset(stats, 0, sizeof(*stats));
+            stats->total_reads = readstats.all_reads_count;
+            stats->total_aligned = readstats.num_aligned.load();
+            stats->total_id_cov_pass = readstats.n_yid_ycov.load();
+            stats->total_denovo = readstats.num_denovo.load();
+            stats->min_read_len = readstats.min_read_len;
+            stats->max_read_len = readstats.max_read_len;
+            auto wall_end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = wall_end - wall_start;
+            stats->wall_time_sec = elapsed.count();
+        }
+
+        /* populate output */
+        if (out) {
+            auto *o = static_cast<smr_output_t *>(calloc(1, sizeof(smr_output_t)));
+            if (!o) {
+                set_error(ctx, SMR_ERR_ALLOC, "failed to allocate smr_output_t");
+                return SMR_ERR_ALLOC;
+                /* wdguard destructor cleans up workdir */
+            }
+
+            /* use readstats for authoritative total count */
+            o->num_reads = readstats.all_reads_count;
+
+            /* count aligned from BLAST output (one line per alignment with --num_alignments 1) */
+            std::string blast_file = workdir + "/aligned.blast";
+            if (file_exists(blast_file.c_str())) {
+                o->num_aligned = count_lines(blast_file);
+            } else {
+                /* fallback: count aligned FASTA/FASTQ sequences */
+                std::string aligned_path = find_output_file(workdir + "/aligned");
+                if (!aligned_path.empty())
+                    o->num_aligned = count_seqs(aligned_path);
+            }
+
+            *out = o;
+        }
+
+        set_error(ctx, SMR_OK, "");
+        return SMR_OK;
+
+    } catch (const smr_exit_requested &) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "unexpected --help/--version in library context");
+        return SMR_ERR_INVALID_CONFIG;
+        /* wdguard destructor cleans up workdir */
+    } catch (const std::exception &e) {
+        set_error(ctx, SMR_ERR_ALIGN, "%s", e.what());
+        return SMR_ERR_ALIGN;
+        /* wdguard destructor cleans up workdir */
+    }
 }
 
 void smr_output_free(smr_output_t *out) {
     if (!out) return; /* NULL is always safe -- contract */
-    /* stub -- Phase 5 will implement */
+    /* free library-owned string arrays */
+    if (out->read_ids) {
+        for (uint64_t i = 0; i < out->num_reads; i++)
+            free(const_cast<char*>(out->read_ids[i]));
+        free(const_cast<char**>(out->read_ids));
+    }
+    if (out->cigar) {
+        for (uint64_t i = 0; i < out->num_reads; i++)
+            free(const_cast<char*>(out->cigar[i]));
+        free(const_cast<char**>(out->cigar));
+    }
+    free(out->aligned);
+    free(out->ref_index);
+    free(out->e_value);
+    free(out->identity);
+    free(out->coverage);
+    free(out->ref_start);
+    free(out->ref_end);
+    free(out);
 }
 
 /* --- Version --- */
