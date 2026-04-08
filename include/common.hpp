@@ -117,6 +117,20 @@ const char DELIM = ':';
 #define STAMP  "[" << __func__ << ":" << __LINE__ << "] "
 #define STAMPL "[" << __FILE__ << ":" << __func__ ":" << __LINE__ << "] "
 
+/*
+ * Thread-local log callback for library mode. Set by smr_run() before
+ * calling the pipeline, cleared after. When non-null, INFO/ERR/WARN
+ * macros route through this callback instead of stdout/stderr.
+ */
+typedef void (*smr_log_fn)(int level, const char *msg, void *user_data);
+extern thread_local smr_log_fn smr_tl_log_callback;
+extern thread_local void* smr_tl_log_user_data;
+
+/* log levels matching smr_api.h */
+#define SMR_LOG_INFO_  1
+#define SMR_LOG_WARN_  2
+#define SMR_LOG_ERROR_ 3
+
 template<typename ...Args>
 static inline std::string fold_to_string(Args&&... args) {
     std::stringstream ss;
@@ -168,61 +182,73 @@ static inline size_t get_memory() {
 }
 #endif
 
+/*
+ * Logging macros: when smr_tl_log_callback is set (library mode),
+ * route through the callback. Otherwise write to stdout/stderr
+ * (native binary mode).
+ */
+#define SMR_LOG_ROUTE(level, str) \
+	do { \
+		if (smr_tl_log_callback) { \
+			smr_tl_log_callback(level, (str).c_str(), smr_tl_log_user_data); \
+		} else { \
+			((level) == SMR_LOG_ERROR_ ? std::cerr : std::cout) << (str); \
+		} \
+	} while(0)
+
 #define INFO(...) \
 	{\
 		std::stringstream ss; \
 		ss << STAMP << fold_to_string(__VA_ARGS__) << std::endl; \
-		std::cout << ss.str(); \
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
 	}
 
-// no end line
 #define INFO_NE(...) \
 	{\
 		std::stringstream ss; \
 		ss << STAMP << fold_to_string(__VA_ARGS__); \
-		std::cout << ss.str(); \
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
 	}
 
-// No Stamp, no endl
 #define INFO_NS(...) \
 	{\
 		std::stringstream ss; \
 		ss << fold_to_string(__VA_ARGS__); \
-		std::cout << ss.str(); \
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
 	}
 
 #define INFO_MEM(...) \
 	{\
 		std::stringstream ss; \
 		ss << STAMP << fold_to_string(__VA_ARGS__) << " Memory KB: " << (get_memory() >> 10) << std::endl; \
-		std::cout << ss.str();\
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
 	}
 
 #define WARN(...) \
 	{\
 		std::stringstream ss; \
-		ss << '\n' << STAMP << YELLOW << "WARNING" << COLOFF << ": " << fold_to_string(__VA_ARGS__) << std::endl; \
-		std::cout << ss.str();\
+		ss << '\n' << STAMP << "WARNING: " << fold_to_string(__VA_ARGS__) << std::endl; \
+		SMR_LOG_ROUTE(SMR_LOG_WARN_, ss.str()); \
 	}
 
 #define ERR(...) \
 	{\
 		std::stringstream ss; \
-		ss << '\n' << STAMP << RED << "ERROR" << COLOFF << ": " << fold_to_string(__VA_ARGS__) << std::endl; \
-		std::cerr << ss.str();\
+		ss << '\n' << STAMP << "ERROR: " << fold_to_string(__VA_ARGS__) << std::endl; \
+		SMR_LOG_ROUTE(SMR_LOG_ERROR_, ss.str()); \
 	}
 
 #define PRN_MEM(msg) \
 	{\
 		std::stringstream ss; \
 		ss << STAMP << msg << " Memory KB: " << (get_memory() >> 10) << std::endl; \
-		std::cout << ss.str();\
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
 	}
 
 #define PRN_MEM_TIME(msg, time) \
     {\
 		std::stringstream ss; \
 		ss << STAMP << msg << " Memory KB: " << (get_memory() >> 10) << " Elapsed sec: " << time << std::endl; \
-		std::cout << ss.str();\
+		SMR_LOG_ROUTE(SMR_LOG_INFO_, ss.str()); \
     }
 //~EOF

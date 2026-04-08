@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 /* stringification helpers for version macros */
 #define SMR_STRINGIFY2(x) #x
@@ -36,6 +37,9 @@
 
 /* process-level atomic counter for unique workdir names across all contexts */
 static std::atomic<int> g_run_counter{0};
+
+/* thread-local log routing defined in smr_log.cpp (part of smr_objs),
+ * declared in common.hpp. Set by smr_run(), read by INFO/ERR/WARN macros. */
 
 /* --- Internal context definition (opaque to callers) --- */
 
@@ -78,6 +82,46 @@ public:
         }
     }
     void release() { owned_ = false; }
+};
+
+/* RAII guard for stdout/stderr suppression via dup2.
+ * Best-effort: if dup/open fails, silently proceeds without suppression.
+ * NOTE: dup2 is process-wide — not safe for concurrent smr_run() calls
+ * from multiple threads. The macro-based log routing (thread-local) is
+ * the primary isolation mechanism; this is a secondary defense against
+ * direct std::cout writes that bypass the macros. */
+class FdRedirectGuard {
+    int saved_out_, saved_err_;
+public:
+    FdRedirectGuard() : saved_out_(-1), saved_err_(-1) {
+        fflush(stdout); fflush(stderr);
+        saved_out_ = dup(STDOUT_FILENO);
+        saved_err_ = dup(STDERR_FILENO);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            if (saved_out_ >= 0) dup2(devnull, STDOUT_FILENO);
+            if (saved_err_ >= 0) dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+    }
+    ~FdRedirectGuard() {
+        fflush(stdout); fflush(stderr);
+        if (saved_out_ >= 0) { dup2(saved_out_, STDOUT_FILENO); close(saved_out_); }
+        if (saved_err_ >= 0) { dup2(saved_err_, STDERR_FILENO); close(saved_err_); }
+    }
+};
+
+/* RAII guard for thread-local log callback */
+class LogRouteGuard {
+public:
+    LogRouteGuard(smr_log_fn cb, void *ud) {
+        smr_tl_log_callback = cb;
+        smr_tl_log_user_data = ud;
+    }
+    ~LogRouteGuard() {
+        smr_tl_log_callback = nullptr;
+        smr_tl_log_user_data = nullptr;
+    }
 };
 
 /* --- Configuration --- */
@@ -330,8 +374,13 @@ int smr_run(smr_context_t *ctx,
         workdir = ss.str();
     }
 
-    /* RAII cleanup for temp workdir — handles all exit paths including exceptions */
+    /* RAII guards — destructor order is reverse of declaration:
+     * 1. LogRouteGuard: set thread-local callback (cleared first on exit)
+     * 2. FdRedirectGuard: suppress stdout/stderr via dup2 (restored after log clear)
+     * 3. WorkdirGuard: clean temp workdir (last to clean up) */
     WorkdirGuard wdguard(workdir, workdir_is_temp);
+    LogRouteGuard loguard(ctx->config.log_callback, ctx->config.log_user_data);
+    FdRedirectGuard fdguard;
 
     try {
         /* build argv and construct Runopts */
@@ -400,17 +449,19 @@ int smr_run(smr_context_t *ctx,
             *out = o;
         }
 
+        /* RAII guards handle cleanup on return */
         set_error(ctx, SMR_OK, "");
         return SMR_OK;
 
     } catch (const smr_exit_requested &) {
         set_error(ctx, SMR_ERR_INVALID_CONFIG, "unexpected --help/--version in library context");
         return SMR_ERR_INVALID_CONFIG;
-        /* wdguard destructor cleans up workdir */
     } catch (const std::exception &e) {
         set_error(ctx, SMR_ERR_ALIGN, "%s", e.what());
         return SMR_ERR_ALIGN;
-        /* wdguard destructor cleans up workdir */
+    } catch (...) {
+        set_error(ctx, SMR_ERR_ALIGN, "unknown exception in pipeline");
+        return SMR_ERR_ALIGN;
     }
 }
 

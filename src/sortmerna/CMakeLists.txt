@@ -137,6 +137,7 @@ set(SMR_SRCS
 	report_denovo.cpp
 	report_biom.cpp
 	report_sam.cpp
+	smr_log.cpp
 	#writer.cpp
 )
 

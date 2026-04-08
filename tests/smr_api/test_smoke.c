@@ -8,6 +8,7 @@
 #include "test_harness.h"
 #include "smr_api.h"
 #include <stddef.h> /* offsetof */
+#include <unistd.h> /* dup, dup2 */
 
 /* ---- Phase 0: Smoke tests ---- */
 
@@ -451,6 +452,88 @@ TEST(test_run_multiple_sequential) {
     smr_ctx_destroy(ctx);
 }
 
+/* ---- Phase 6: I/O isolation ---- */
+
+TEST(test_no_stdout_during_run) {
+    /* redirect stdout to /dev/null, run pipeline, check nothing leaked */
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+
+    /* capture stdout to a temp file */
+    fflush(stdout);
+    int old_stdout = dup(1);
+    FILE *tmp = tmpfile();
+    int tmp_fd = fileno(tmp);
+    dup2(tmp_fd, 1);
+
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    /* restore stdout */
+    fflush(stdout);
+    dup2(old_stdout, 1);
+    close(old_stdout);
+
+    /* check run succeeded and captured output is empty */
+    ASSERT_EQ_INT(rc, SMR_OK);
+
+    fseek(tmp, 0, SEEK_END);
+    long captured_size = ftell(tmp);
+    fclose(tmp);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+
+    ASSERT_EQ_INT((int)captured_size, 0);
+}
+
+static int _run_log_count = 0;
+static void run_log_cb(int level, const char *msg, void *user_data) {
+    (void)level; (void)msg;
+    int *counter = (int *)user_data;
+    if (counter) (*counter)++;
+}
+
+TEST(test_log_callback_fires_during_run) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    int count = 0;
+    cfg.log_callback = run_log_cb;
+    cfg.log_user_data = &count;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    /* at minimum: "context created", "pipeline starting", "pipeline complete" */
+    ASSERT_TRUE(count >= 3);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_null_log_callback_silent) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.log_callback = NULL;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -503,4 +586,8 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_run_small_aligned_count);
     RUN_TEST(test_run_output_free_after_run);
     RUN_TEST(test_run_multiple_sequential);
+    /* Phase 6 */
+    RUN_TEST(test_no_stdout_during_run);
+    RUN_TEST(test_log_callback_fires_during_run);
+    RUN_TEST(test_null_log_callback_silent);
 TEST_MAIN_END()
