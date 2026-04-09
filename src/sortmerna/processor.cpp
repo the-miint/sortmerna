@@ -120,7 +120,6 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 				if (read.is_done) {
 					++num_skipped;
 				}
-				//INFO("Skpping read ID: ", read.id);
 				continue;
 			}
 
@@ -161,7 +160,7 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 
 	std::chrono::duration<double> elapsed = std::chrono::high_resolution_clock::now() - starts;
 	INFO("Processor ", id, " thread ", std::this_thread::get_id(), " done. Processed ",
-		num_all, " reads. Skipped already processed: ", num_skipped, " reads", 
+		num_all, " reads. Skipped already processed: ", num_skipped, " reads",
 		" Aligned reads (passing E-value): ", num_hit, " Runtime sec: ", elapsed.count());
 } // ~align2
 

@@ -152,7 +152,7 @@ void smr_config_init(smr_config_t *cfg) {
     cfg->mismatch = -3;            /* Runopts::mismatch */
     cfg->gap_open =  5;            /* Runopts::gap_open */
     cfg->gap_ext  =  2;            /* Runopts::gap_extension */
-    cfg->score_N  =  0;            /* Runopts::score_N */
+    cfg->score_N  = -3;            /* Runopts default: equals mismatch */
     cfg->evalue   = -1.0;          /* Runopts::evalue (-1 = unset) */
 
     /* indexing */

@@ -127,7 +127,7 @@ TEST(test_config_default_gap_ext) {
 TEST(test_config_default_score_N) {
     smr_config_t cfg;
     smr_config_init(&cfg);
-    ASSERT_EQ_INT(cfg.score_N, 0);
+    ASSERT_EQ_INT(cfg.score_N, -3);
 }
 
 TEST(test_config_default_evalue) {
