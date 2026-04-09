@@ -147,20 +147,22 @@ Read::Read()
 
 Read::Read(std::string& readstr) : Read() {	isEmpty = !from_string(readstr); }
 
-Read::Read(std::string id, std::size_t read_num) : Read() { id = id; read_num = read_num; }
+Read::Read(std::string id, std::size_t read_num) : Read() { this->id = std::move(id); this->read_num = read_num; }
 
-//Read::Read(std::string id, std::string header, std::string sequence, std::string quality, BIO_FORMAT format)
-//	:
-//	Read()
-//{
-//	id = id;
-//	isEmpty = false;
-//	format = format;
-//	header = header; // std::move(header)
-//	sequence = sequence;
-//	quality = quality;
-//	validate();
-//}
+Read::Read(std::string id, std::size_t readfile_idx, std::size_t read_num,
+           std::string header, std::string sequence, std::string quality, BIO_FORMAT format)
+	:
+	Read()
+{
+	this->id = std::move(id);
+	this->readfile_idx = readfile_idx;
+	this->read_num = read_num;
+	this->header = std::move(header);
+	this->sequence = std::move(sequence);
+	this->quality = std::move(quality);
+	this->format = format;
+	this->isEmpty = false;
+}
 
 //Read::~Read() {}
 

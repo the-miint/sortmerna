@@ -46,11 +46,29 @@ Quick start
        printf("Total reads: %llu\n", (unsigned long long)stats.total_reads);
        printf("Aligned:     %llu\n", (unsigned long long)out->num_aligned);
 
-       /* 4. Clean up */
+       /* 4. Inspect per-read results */
+       for (uint64_t i = 0; i < out->num_reads; i++) {
+           if (out->aligned[i])
+               printf("%s: %.1f%% identity, e=%.2g\n",
+                      out->read_ids[i], out->identity[i], out->e_value[i]);
+       }
+
+       /* 5. Clean up */
        smr_output_free(out);
        smr_ctx_destroy(ctx);
        return 0;
    }
+
+In-memory input:
+
+.. code-block:: c
+
+   /* Pass sequences directly without writing temp files */
+   smr_seq_t seqs[] = {
+       { "read1", "ACGTACGTACGT...", NULL },
+       { "read2", "TGCATGCATGCA...", NULL },
+   };
+   int rc = smr_run_seqs(ctx, refs, 1, seqs, 2, &out, &stats);
 
 Building
 --------
@@ -84,7 +102,8 @@ Configuration
 .. c:function:: void smr_config_init(smr_config_t *cfg)
 
    Initialize a configuration struct with sensible defaults. Must be called
-   before modifying any fields. Sets ``struct_size`` for ABI version detection.
+   before modifying any fields. Sets ``struct_size`` (``uint32_t``) for ABI
+   version detection.
 
    After calling ``smr_config_init``, the struct is ready for immediate use
    without further modification.
@@ -112,7 +131,7 @@ Configuration
    ``gap_open``              ``int32_t``  5
    ``gap_ext``               ``int32_t``  2
    ``score_N``               ``int32_t``  0
-   ``evalue``                ``double``   -1.0 (off)
+   ``evalue``                ``double``   ``SMR_EVALUE_OFF`` (-1.0)
    ``seed_win_len``          ``uint32_t`` 18
    ``num_alignments``        ``uint32_t`` 1
    ========================  ===========  ===========
@@ -240,26 +259,61 @@ Computation
    A context may be reused for multiple sequential ``smr_run`` calls. Each
    call produces an independent output that must be freed separately.
 
+.. c:function:: int smr_run_seqs(smr_context_t *ctx, const char **ref_paths, int32_t num_refs, const smr_seq_t *seqs, int32_t num_seqs, smr_output_t **out, smr_stats_t *stats)
+
+   In-memory variant of ``smr_run``. Accepts sequences directly instead of
+   file paths. No temporary read files are created; sequences are served
+   to the pipeline through an in-memory readfeed.
+
+   Reference databases are still loaded from files (index building requires
+   file paths). Only the query sequences are in-memory.
+
+   :param ctx: Context created by ``smr_ctx_create``.
+   :param ref_paths: Array of reference FASTA file paths.
+   :param num_refs: Number of reference files (must be > 0).
+   :param seqs: Array of ``smr_seq_t`` input sequences.
+   :param num_seqs: Number of input sequences (must be > 0).
+   :param out: Pointer to receive the output struct. May be NULL.
+   :param stats: Pointer to receive run statistics. May be NULL.
+   :returns: ``SMR_OK`` on success, or a negative error code on failure.
+
+.. c:type:: smr_seq_t
+
+   A single input sequence for ``smr_run_seqs``. All pointers are
+   caller-owned and must remain valid for the duration of the call.
+
+   ==================  ===============  ==========================================
+   Field               Type             Description
+   ==================  ===============  ==========================================
+   ``id``              ``const char*``  Identifier (without ``>`` or ``@``)
+   ``sequence``        ``const char*``  Nucleotide sequence
+   ``quality``         ``const char*``  Quality string, or NULL for FASTA
+   ==================  ===============  ==========================================
+
 .. c:type:: smr_output_t
 
    Alignment results. Library-allocated; call ``smr_output_free`` when done.
    The output is independent of the context and remains valid after
    ``smr_ctx_destroy``.
 
+   All per-read arrays are indexed ``[0 .. num_reads-1]`` in input order.
+   Coordinates (``ref_start``, ``ref_end``) are 1-based, matching BLAST/SAM
+   convention.
+
    ==================  ================  ===========================================
    Field               Type              Description
    ==================  ================  ===========================================
    ``num_reads``       ``uint64_t``      Total number of input reads
    ``num_aligned``     ``uint64_t``      Number of reads with at least one alignment
-   ``read_ids``        ``const char**``  Read identifiers (reserved, currently NULL)
-   ``aligned``         ``int32_t*``      0/1 per read (reserved, currently NULL)
-   ``ref_index``       ``int32_t*``      Reference index (reserved, currently NULL)
-   ``e_value``         ``double*``       E-value per read (reserved, currently NULL)
-   ``identity``        ``double*``       Percent identity (reserved, currently NULL)
-   ``coverage``        ``double*``       Query coverage (reserved, currently NULL)
-   ``ref_start``       ``int32_t*``      1-based ref start (reserved, currently NULL)
-   ``ref_end``         ``int32_t*``      1-based ref end (reserved, currently NULL)
-   ``cigar``           ``const char**``  CIGAR string (reserved, currently NULL)
+   ``read_ids``        ``const char**``  Read identifiers (first header token)
+   ``aligned``         ``int32_t*``      1 if aligned, 0 otherwise
+   ``ref_index``       ``int32_t*``      Reference index, -1 if unaligned
+   ``e_value``         ``double*``       E-value of best alignment
+   ``identity``        ``double*``       Percent identity (0--100)
+   ``coverage``        ``double*``       Query coverage (0--100)
+   ``ref_start``       ``int32_t*``      1-based start on reference
+   ``ref_end``         ``int32_t*``      1-based end on reference
+   ``cigar``           ``const char**``  CIGAR string, NULL if unaligned
    ==================  ================  ===========================================
 
 .. c:type:: smr_stats_t
@@ -298,14 +352,15 @@ Design notes
 ABI stability
 #############
 
-The ``smr_config_t`` struct uses ``struct_size`` as its first field for ABI
-version detection. ``smr_ctx_create`` validates that the caller's struct size
-matches the library's. This allows the library to detect mismatches when a
-caller was compiled against a different version of the header.
+The ``smr_config_t`` struct uses ``struct_size`` (``uint32_t``) as its first
+field for ABI version detection. ``uint32_t`` is used instead of ``size_t`` to
+ensure consistent width across 32-bit and 64-bit platforms. ``smr_ctx_create``
+validates that the caller's struct size matches the library's, detecting
+mismatches when a caller was compiled against a different header version.
 
 All boolean fields use ``int32_t`` (not ``bool``) for consistent sizing across
 C and C++ compilers. Integer fields use explicit-width types from
-``<stdint.h>``.
+``<stdint.h>``. The header requires only ``<stdint.h>`` (not ``<stddef.h>``).
 
 Opaque context
 ##############

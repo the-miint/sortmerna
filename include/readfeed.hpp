@@ -47,9 +47,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "izlib.hpp"
 #include "readstate.h"
 #include "readfile.h"
-
- // forward
-class Read;
+#include "read.hpp"
 class KeyValueDatabase;
 struct Runopts;
 
@@ -60,9 +58,13 @@ class Readfeed {
 public:
 	Readfeed(FEED_TYPE type, std::vector<std::string>& readfiles, std::filesystem::path& basedir, bool is_paired);
 	Readfeed(FEED_TYPE type, std::vector<std::string>& readfiles, const unsigned num_parts, std::filesystem::path& basedir, bool is_paired);
+	/* Memory-mode constructor: sequences served from in-memory vectors, no file I/O */
+	Readfeed(std::vector<std::string> ids, std::vector<std::string> seqs, std::vector<std::string> quals,
+	         unsigned num_parts, std::filesystem::path& basedir, bool is_paired);
 
 	void run();
 	bool next(int inext, std::string& readstr);
+	bool next(int inext, Read& read);
 	void reset();
 	void rewind();
 	void rewind_in();
@@ -172,6 +174,10 @@ private:
 	std::vector<std::ofstream> ofsv;
 	std::vector<Izlib> vzlib_out;
 	std::vector<Readstate> vstate_out;
+
+	// memory-mode storage (FEED_TYPE::MEMORY)
+	std::vector<std::vector<Read>> mem_reads; // structured reads per split
+	std::vector<size_t> mem_idx; // current read index per split
 };
 
 // ~readfeed.hpp

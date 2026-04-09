@@ -96,15 +96,14 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 	unsigned num_all = 0; // all reads this processor sees
 	unsigned num_skipped = 0; // reads already processed i.e. results found in Database
 	unsigned num_hit = 0; // count of reads with read.hit = true found by a single thread - just for logging
-	std::string readstr;
 
 	auto starts = std::chrono::high_resolution_clock::now();
 	INFO("Processor ", id, " thread ", std::this_thread::get_id(), " started");
 	int idx = id * readfeed.num_sense; // index into split files array
-	for (; readfeed.next(idx, readstr);)
+	Read read;
+	for (; readfeed.next(idx, read);)
 	{
 		{
-			Read read(readstr);
 			read.init(opts);
 			read.is_too_short = read.sequence.size() < refstats.lnwin[index.index_num];
 
@@ -141,7 +140,7 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 					if (!read.reversed)
 						read.revIntStr();
 				}
-				
+
 				traverse(opts, index, refs, readstats, refstats, read, search_single_strand || count == 1); // 'paralleltraversal.cpp'
 				read.id_win_hits.clear(); // bug 46
 			}
@@ -154,7 +153,6 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 					kvdb.put(read.id, read.toBinString());
 			}
 
-			readstr.resize(0);
 			++num_all;
 		} // ~if & read destroyed
 
@@ -283,7 +281,6 @@ void denovo_stats_run(const uint32_t& id,
 	uint64_t countReads = 0;
 	uint64_t num_invalid = 0; // empty or invalid reads count
 	uint16_t num_reads = opts.is_paired ? 2 : 1;
-	std::string readstr;
 	std::vector<Read> reads; // two reads if paired, a single read otherwise
 
 	if (opts.dbg_level == 2)
@@ -295,15 +292,15 @@ void denovo_stats_run(const uint32_t& id,
 		uint32_t idx = id * readfeed.num_sense; // index into split_files array
 		for (uint16_t i = 0; i < num_reads; ++i)
 		{
-			if (readfeed.next(idx, readstr))
+			reads.emplace_back();
+			if (readfeed.next(idx, reads.back()))
 			{
-				reads.emplace_back(Read(readstr));
-				reads[i].init(opts);
-				reads[i].load_db(kvdb);
-				readstr.resize(0);
+				reads.back().init(opts);
+				reads.back().load_db(kvdb);
 				++countReads;
 			}
 			else {
+				reads.pop_back();
 				isDone = true;
 			}
 			if (opts.is_paired) idx ^= 1; // switch fwd-rev
@@ -361,7 +358,7 @@ void denovo_stats(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 	std::chrono::duration<double> elapsed;
 
 	int nthreads = 0;
-	if (readfeed.type == FEED_TYPE::SPLIT_READS) {
+	if (readfeed.type != FEED_TYPE::LOCKLESS) {
 		nthreads = opts.num_proc_thread;
 		readfeed.init_reading(); // prepare readfeed
 	}
@@ -392,7 +389,7 @@ void denovo_stats(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 			start_i = std::chrono::high_resolution_clock::now(); // index processing starts
 
 			// start threads
-			if (opts.feed_type == FEED_TYPE::SPLIT_READS) {
+			if (opts.feed_type != FEED_TYPE::LOCKLESS) {
 				for (int i = 0; i < nthreads; ++i) {
 					tpool.emplace_back(std::thread(denovo_stats_run, i, std::ref(readfeed),
 						std::ref(readstats), std::ref(refs), std::ref(kvdb), std::ref(opts)));

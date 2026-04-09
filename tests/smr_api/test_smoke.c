@@ -7,19 +7,54 @@
 
 #include "test_harness.h"
 #include "smr_api.h"
-#include <stddef.h> /* offsetof */
-#include <unistd.h> /* dup, dup2 */
+#include <stddef.h>  /* offsetof */
+#include <stdlib.h>  /* mkdtemp, system */
+#include <unistd.h>  /* dup, dup2, rmdir */
+#include <pthread.h> /* concurrent test */
+#include <math.h>    /* fabs */
+
+/*
+ * Compare a produced output file against a golden reference file.
+ * For SAM files, skip @-header lines (contain workdir paths that vary).
+ * Returns 1 if files match, 0 otherwise.
+ */
+static int files_match(const char *produced, const char *golden, int skip_sam_headers) {
+    FILE *fp = fopen(produced, "r");
+    FILE *fg = fopen(golden, "r");
+    if (!fp || !fg) {
+        if (fp) fclose(fp);
+        if (fg) fclose(fg);
+        return 0;
+    }
+    char lp[4096], lg[4096];
+    int match = 1;
+    while (1) {
+        char *rp = fgets(lp, sizeof(lp), fp);
+        char *rg = fgets(lg, sizeof(lg), fg);
+        /* skip SAM header lines in both files */
+        if (skip_sam_headers) {
+            while (rp && lp[0] == '@') rp = fgets(lp, sizeof(lp), fp);
+            while (rg && lg[0] == '@') rg = fgets(lg, sizeof(lg), fg);
+        }
+        if (!rp && !rg) break; /* both EOF */
+        if (!rp || !rg) { match = 0; break; } /* one EOF early */
+        if (strcmp(lp, lg) != 0) { match = 0; break; }
+    }
+    fclose(fp);
+    fclose(fg);
+    return match;
+}
 
 /* ---- Phase 0: Smoke tests ---- */
 
 TEST(test_config_init_sets_struct_size) {
     smr_config_t cfg;
     smr_config_init(&cfg);
-    ASSERT_EQ_SZ(cfg.struct_size, sizeof(smr_config_t));
+    ASSERT_EQ_INT((int)cfg.struct_size, (int)sizeof(smr_config_t));
 }
 
 TEST(test_config_struct_size_is_first_field) {
-    ASSERT_EQ_SZ(offsetof(smr_config_t, struct_size), 0);
+    ASSERT_EQ_INT((int)offsetof(smr_config_t, struct_size), 0);
 }
 
 TEST(test_config_init_zeroes_pointers) {
@@ -98,8 +133,8 @@ TEST(test_config_default_score_N) {
 TEST(test_config_default_evalue) {
     smr_config_t cfg;
     smr_config_init(&cfg);
-    /* Runopts default is exactly -1.0 (unset sentinel), IEEE 754 representable */
-    ASSERT_TRUE(cfg.evalue == -1.0);
+    /* Runopts default is SMR_EVALUE_OFF (-1.0), IEEE 754 representable */
+    ASSERT_TRUE(cfg.evalue == SMR_EVALUE_OFF);
 }
 
 TEST(test_config_default_seed_win_len) {
@@ -534,6 +569,391 @@ TEST(test_null_log_callback_silent) {
     smr_ctx_destroy(ctx);
 }
 
+/* ---- Phase 7: Golden file comparison ---- */
+
+static char *make_tmpdir(void) {
+    static char tmpl[256];
+    snprintf(tmpl, sizeof(tmpl), "/tmp/smr_test_XXXXXX");
+    return mkdtemp(tmpl);
+}
+
+static void rm_rf(const char *dir) {
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
+    system(cmd);
+}
+
+TEST(test_golden_tiny_blast) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.blast", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/tiny/aligned.blast", 0));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_tiny_fasta) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.fa", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/tiny/aligned.fa", 0));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_tiny_sam) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.sam", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/tiny/aligned.sam", 1));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_small_blast) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.blast", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/small/aligned.blast", 0));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_small_fasta) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.fa", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/small/aligned.fa", 0));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_small_sam) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/aligned.sam", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/small/aligned.sam", 1));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+TEST(test_golden_small_other) {
+    char *wdir = make_tmpdir();
+    ASSERT_NOT_NULL(wdir);
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.workdir = wdir;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+
+    char produced[512];
+    snprintf(produced, sizeof(produced), "%s/other.fa", wdir);
+    ASSERT_TRUE(files_match(produced, SMR_GOLDEN_DIR "/small/other.fa", 0));
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    rm_rf(wdir);
+}
+
+/* ---- Phase 8: Concurrent smr_run ---- */
+
+struct thread_arg {
+    int rc;
+    uint64_t num_aligned;
+};
+
+static void *concurrent_worker(void *arg) {
+    struct thread_arg *ta = (struct thread_arg *)arg;
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    ta->rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ta->num_aligned = out ? out->num_aligned : 0;
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+    return NULL;
+}
+
+TEST(test_concurrent_smr_run) {
+    pthread_t t1, t2;
+    struct thread_arg a1 = {0, 0}, a2 = {0, 0};
+    pthread_create(&t1, NULL, concurrent_worker, &a1);
+    pthread_create(&t2, NULL, concurrent_worker, &a2);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    ASSERT_EQ_INT(a1.rc, SMR_OK);
+    ASSERT_EQ_INT(a2.rc, SMR_OK);
+    ASSERT_EQ_U64(a1.num_aligned, 1);
+    ASSERT_EQ_U64(a2.num_aligned, 1);
+}
+
+/* ---- Phase 9: Multi-threaded alignment ---- */
+
+TEST(test_run_tiny_multithreaded) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 2;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_EQ_U64(out->num_aligned, 1);
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+/* ---- Phase 10: Per-read output ---- */
+
+TEST(test_run_tiny_per_read_output) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_EQ_U64(out->num_aligned, 1);
+
+    /* per-read arrays should be populated */
+    ASSERT_NOT_NULL(out->read_ids);
+    ASSERT_NOT_NULL(out->aligned);
+    ASSERT_NOT_NULL(out->e_value);
+    ASSERT_NOT_NULL(out->identity);
+    ASSERT_NOT_NULL(out->coverage);
+    ASSERT_NOT_NULL(out->ref_start);
+    ASSERT_NOT_NULL(out->ref_end);
+    ASSERT_NOT_NULL(out->cigar);
+
+    ASSERT_STR_EQ(out->read_ids[0], "AB271211");
+    ASSERT_EQ_INT(out->aligned[0], 1);
+    ASSERT_TRUE(out->ref_start[0] == 1);
+    ASSERT_TRUE(out->ref_end[0] == 1446);
+    ASSERT_DOUBLE_NEAR(out->identity[0], 93.5, 1.0);
+    ASSERT_DOUBLE_NEAR(out->coverage[0], 96.2, 1.0);
+    ASSERT_NOT_NULL(out->cigar[0]);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_small_per_read_output) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 6);
+    ASSERT_EQ_U64(out->num_aligned, 4);
+
+    ASSERT_NOT_NULL(out->read_ids);
+    ASSERT_NOT_NULL(out->aligned);
+
+    /* first 4 reads are aligned, last 2 are not */
+    ASSERT_STR_EQ(out->read_ids[0], "BD.ERD505_1");
+    ASSERT_EQ_INT(out->aligned[0], 1);
+    ASSERT_STR_EQ(out->read_ids[1], "BD.NBS1076_0");
+    ASSERT_EQ_INT(out->aligned[1], 1);
+    ASSERT_STR_EQ(out->read_ids[2], "LD.Glosor1_17");
+    ASSERT_EQ_INT(out->aligned[2], 1);
+    ASSERT_STR_EQ(out->read_ids[3], "BD.ERD510_20");
+    ASSERT_EQ_INT(out->aligned[3], 1);
+    ASSERT_STR_EQ(out->read_ids[4], "random1");
+    ASSERT_EQ_INT(out->aligned[4], 0);
+    ASSERT_STR_EQ(out->read_ids[5], "random2");
+    ASSERT_EQ_INT(out->aligned[5], 0);
+
+    /* unaligned reads have ref_index == -1 */
+    ASSERT_EQ_INT(out->ref_index[4], -1);
+    ASSERT_EQ_INT(out->ref_index[5], -1);
+    ASSERT_NULL(out->cigar[4]);
+    ASSERT_NULL(out->cigar[5]);
+
+    /* spot-check aligned read identity/coverage */
+    ASSERT_DOUBLE_NEAR(out->identity[0], 90.7, 1.0);
+    ASSERT_DOUBLE_NEAR(out->coverage[1], 100.0, 1.0);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+/* ---- Phase 11: In-memory input (smr_run_seqs) ---- */
+
+TEST(test_run_seqs_tiny) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+
+    /* AB271211 sequence (same as test_read.fasta) — first 100 chars for a shorter test */
+    smr_seq_t seqs[1];
+    seqs[0].id = "AB271211";
+    seqs[0].sequence =
+        "TCCAACGCGTTGGGAGCTCTCCCATATGGTCGACCTGCAGGCGGCCGCACTAGTGATTAG"
+        "AGTTTGATCCTGGCTCAGGATGAACGCTGGCGGCGTGCCTAACACATGCAAGTCGAACGG"
+        "GAATCTTCGGATTCTAGTGGCGGACGGGTGAGTAACGCGTAAGAATCTAACTTCAGGACG"
+        "GGGACAACAGTGGGAAACGACTGCTAATACCCGATGTGCCGCGAGGTGAAACCTAATTGG";
+    seqs[0].quality = NULL;
+
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_NOT_NULL(out->read_ids);
+    ASSERT_STR_EQ(out->read_ids[0], "AB271211");
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_seqs_null_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, NULL, 0, &out, &stats);
+    ASSERT_TRUE(rc < 0);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_seqs_empty_seq_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_seq_t seqs[1];
+    seqs[0].id = "test";
+    seqs[0].sequence = "";
+    seqs[0].quality = NULL;
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 1, &out, &stats);
+    ASSERT_TRUE(rc < 0);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -590,4 +1010,23 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_no_stdout_during_run);
     RUN_TEST(test_log_callback_fires_during_run);
     RUN_TEST(test_null_log_callback_silent);
+    /* Phase 7: golden file comparison */
+    RUN_TEST(test_golden_tiny_blast);
+    RUN_TEST(test_golden_tiny_fasta);
+    RUN_TEST(test_golden_tiny_sam);
+    RUN_TEST(test_golden_small_blast);
+    RUN_TEST(test_golden_small_fasta);
+    RUN_TEST(test_golden_small_sam);
+    RUN_TEST(test_golden_small_other);
+    /* Phase 8: concurrent smr_run */
+    RUN_TEST(test_concurrent_smr_run);
+    /* Phase 9: multi-threaded alignment */
+    RUN_TEST(test_run_tiny_multithreaded);
+    /* Phase 10: per-read output */
+    RUN_TEST(test_run_tiny_per_read_output);
+    RUN_TEST(test_run_small_per_read_output);
+    /* Phase 11: in-memory input */
+    RUN_TEST(test_run_seqs_tiny);
+    RUN_TEST(test_run_seqs_null_error);
+    RUN_TEST(test_run_seqs_empty_seq_error);
 TEST_MAIN_END()

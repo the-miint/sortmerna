@@ -12,12 +12,15 @@ target_include_directories(test_smr_api
         ${CONCURRENTQUEUE_HOME}
 )
 
+find_package(Threads REQUIRED)
+
 target_link_libraries(test_smr_api
     smr_api
     build_version
     alp
     $<TARGET_OBJECTS:cmph>
     ${CMAKE_DL_LIBS}
+    Threads::Threads
 )
 
 # Wire golden data directory as a compile definition

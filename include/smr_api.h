@@ -10,7 +10,6 @@
 #ifndef SMR_API_H
 #define SMR_API_H
 
-#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -29,6 +28,9 @@ extern "C" {
 #define SMR_ERR_ALIGN            -5
 #define SMR_ERR_NOT_IMPLEMENTED  -99
 
+/* Sentinel value for smr_config_t.evalue: disables E-value filtering */
+#define SMR_EVALUE_OFF  (-1.0)
+
 /* --------------------------------------------------------------------
  * Log levels (for log_callback)
  * -------------------------------------------------------------------- */
@@ -43,8 +45,9 @@ extern "C" {
  * -------------------------------------------------------------------- */
 
 typedef struct smr_config {
-    /* ABI version detection -- MUST be first field */
-    size_t struct_size;
+    /* ABI version detection -- MUST be first field.
+     * uint32_t (not size_t) for consistent width across 32/64-bit platforms. */
+    uint32_t struct_size;
 
     /* Threading */
     int32_t num_threads;
@@ -154,6 +157,31 @@ int smr_run(smr_context_t *ctx,
             const char **read_paths, int32_t num_reads,
             smr_output_t **out,
             smr_stats_t *stats);
+
+/*
+ * smr_seq_t -- a single input sequence for smr_run_seqs().
+ * All pointers are caller-owned and must remain valid for the duration
+ * of the smr_run_seqs() call.
+ */
+typedef struct smr_seq {
+    const char *id;       /* identifier (without > or @) */
+    const char *sequence; /* nucleotide sequence */
+    const char *quality;  /* quality string, or NULL for FASTA */
+} smr_seq_t;
+
+/*
+ * In-memory variant of smr_run(). Accepts sequences directly instead of
+ * file paths. No temporary read files are created; sequences are served
+ * to the pipeline through an in-memory readfeed.
+ *
+ * Reference databases are still loaded from files (index building requires
+ * file paths). Only the query sequences are in-memory.
+ */
+int smr_run_seqs(smr_context_t *ctx,
+                 const char **ref_paths, int32_t num_refs,
+                 const smr_seq_t *seqs, int32_t num_seqs,
+                 smr_output_t **out,
+                 smr_stats_t *stats);
 
 void smr_output_free(smr_output_t *out);
 

@@ -135,7 +135,8 @@ public:
 	Read();
 	Read(std::string& readstr);
 	Read(std::string id, std::size_t read_num);
-	//Read(std::string id, std::string header, std::string sequence, std::string quality, BIO_FORMAT format);
+	Read(std::string id, std::size_t readfile_idx, std::size_t read_num,
+	     std::string header, std::string sequence, std::string quality, BIO_FORMAT format);
 	Read(const Read & that); // copy constructor
 	Read & operator=(const Read & that); // copy assignment
 	//~Read();

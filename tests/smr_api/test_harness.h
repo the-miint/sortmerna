@@ -85,6 +85,15 @@ static int _test_current_failed = 0;
     } \
 } while(0)
 
+#define ASSERT_DOUBLE_NEAR(a, b, eps) do { \
+    double _a = (double)(a); double _b = (double)(b); double _e = (double)(eps); \
+    double _d = (_a > _b) ? (_a - _b) : (_b - _a); \
+    if (_d > _e) { \
+        printf(" FAIL\n    %s:%d: |%.6g - %.6g| = %.6g > %.6g\n", __FILE__, __LINE__, _a, _b, _d, _e); \
+        _tests_failed++; _test_current_failed = 1; return; \
+    } \
+} while(0)
+
 #define TEST_MAIN_BEGIN() int main(void) { printf("Running tests:\n");
 #define TEST_MAIN_END() \
     printf("\n%d tests, %d failures\n", _tests_run, _tests_failed); \

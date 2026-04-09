@@ -136,15 +136,14 @@ void fill_otu_map2(int id, OtuMap& otumap, Readfeed& readfeed, References& refs,
 	//unsigned c_yid_ncov = 0;
 	//unsigned c_nid_ycov = 0;
 	//unsigned c_nid_ncov = 0;
-	std::string readstr;
 
 	if (opts.dbg_level == 2)
 		INFO("OTU map thread ", id, " : ", std::this_thread::get_id(), " started");
 
-	for (;readfeed.next(id, readstr);)
+	Read read;
+	for (;readfeed.next(id, read);)
 	{
 		{
-			Read read(readstr);
 			read.init(opts);
 			read.load_db(kvdb);
 
@@ -179,7 +178,6 @@ void fill_otu_map2(int id, OtuMap& otumap, Readfeed& readfeed, References& refs,
 				}
 			} // ~for all alignments of a read
 
-			readstr.resize(0);
 			++c_reads;
 			if (read.is_hit) ++c_aligned;
 		} // ~ a read scope ends
@@ -232,9 +230,9 @@ void fill_otu_map(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 					//tpool.addJob(f_readfeed_run);
 					//tpool.addJob(Readfeed(opts.feed_type, opts.readfiles, opts.is_gz));
 				}
-				else if (opts.feed_type == FEED_TYPE::SPLIT_READS) {
+				else {
 					for (int i = 0; i < numThreads; ++i) {
-						tpool.emplace_back(std::thread(fill_otu_map2, i, std::ref(otumap), 
+						tpool.emplace_back(std::thread(fill_otu_map2, i, std::ref(otumap),
 							std::ref(readfeed), std::ref(refs),	std::ref(kvdb), std::ref(opts)));
 					}
 				}

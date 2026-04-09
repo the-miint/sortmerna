@@ -10,6 +10,8 @@
 #include "readfeed.hpp"
 #include "readstats.hpp"
 #include "refstats.hpp"
+#include "references.hpp"
+#include "read.hpp"
 #include "processor.hpp"
 #include "output.hpp"
 #include "summary.hpp"
@@ -28,6 +30,7 @@
 #include <vector>
 #include <string>
 #include <stdexcept>
+#include <cmath>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -108,6 +111,10 @@ public:
             if (saved_out_ >= 0) dup2(devnull, STDOUT_FILENO);
             if (saved_err_ >= 0) dup2(devnull, STDERR_FILENO);
             close(devnull);
+        } else {
+            /* open failed — clean up saved fds to avoid leak */
+            if (saved_out_ >= 0) { close(saved_out_); saved_out_ = -1; }
+            if (saved_err_ >= 0) { close(saved_err_); saved_err_ = -1; }
         }
     }
     ~FdRedirectGuard() {
@@ -135,7 +142,7 @@ public:
 void smr_config_init(smr_config_t *cfg) {
     if (!cfg) return;
     memset(cfg, 0, sizeof(*cfg));
-    cfg->struct_size = sizeof(*cfg);
+    cfg->struct_size = (uint32_t)sizeof(*cfg);
 
     /* threading */
     cfg->num_threads = 2;          /* Runopts::num_proc_thread */
@@ -160,7 +167,7 @@ void smr_config_init(smr_config_t *cfg) {
 
 smr_context_t *smr_ctx_create(const smr_config_t *cfg) {
     if (!cfg) return nullptr;
-    if (cfg->struct_size != sizeof(smr_config_t)) return nullptr;
+    if (cfg->struct_size != (uint32_t)sizeof(smr_config_t)) return nullptr;
 
     auto *ctx = static_cast<smr_context_t *>(malloc(sizeof(smr_context_t)));
     if (!ctx) return nullptr;
@@ -252,10 +259,11 @@ static std::vector<std::string> build_argv(
     args.push_back("--num_alignments");
     args.push_back(std::to_string(cfg.num_alignments));
 
-    /* always produce BLAST output for structured result extraction */
+    /* always produce BLAST and SAM output for structured result extraction */
     args.push_back("--blast");
     args.push_back("1 cigar qcov");
     args.push_back("--fastx");
+    args.push_back("--sam");
 
     /* always emit all scoring parameters */
     args.push_back("--match");
@@ -286,43 +294,157 @@ static std::vector<std::string> build_argv(
 }
 
 /*
- * Find an output file trying multiple extensions (.fa, .fasta, .fq, .fastq).
- * Returns empty string if none found.
+ * Build a CIGAR string from an s_align2's packed cigar vector + read coords.
+ * Matches the format produced by report_blast.cpp.
  */
-static std::string find_output_file(const std::string &prefix) {
-    static const char* exts[] = { ".fa", ".fasta", ".fq", ".fastq" };
-    for (auto ext : exts) {
-        std::string path = prefix + ext;
-        if (file_exists(path.c_str())) return path;
+static std::string build_cigar_string(const s_align2 &align, uint32_t readlen) {
+    std::string cigar;
+    if (align.read_begin1 != 0)
+        cigar += std::to_string(align.read_begin1) + "S";
+    for (uint32_t c = 0; c < align.cigar.size(); ++c) {
+        uint32_t letter = 0xf & align.cigar[c];
+        uint32_t length = (0xfffffff0 & align.cigar[c]) >> 4;
+        cigar += std::to_string(length);
+        if (letter == 0) cigar += "M";
+        else if (letter == 1) cigar += "I";
+        else cigar += "D";
     }
-    return "";
+    auto end_mask = readlen - align.read_end1 - 1;
+    if (end_mask > 0)
+        cigar += std::to_string(end_mask) + "S";
+    return cigar;
 }
 
 /*
- * Count non-empty lines in a file.
+ * Extract the read identifier (first token of header, without > or @).
  */
-static uint64_t count_lines(const std::string &path) {
-    std::ifstream ifs(path);
-    uint64_t count = 0;
-    std::string line;
-    while (std::getline(ifs, line)) {
-        if (!line.empty()) count++;
-    }
-    return count;
+static std::string extract_read_id(const std::string &header) {
+    size_t start = (header.size() > 0 && (header[0] == '>' || header[0] == '@')) ? 1 : 0;
+    auto end = header.find_first_of(" \t", start);
+    return header.substr(start, end - start);
 }
 
 /*
- * Count sequences in a FASTA/FASTQ file by counting header lines.
+ * Populate per-read output arrays by iterating through readfeed and loading
+ * alignment results from kvdb. Loads references to compute %ID, %COV, E-value
+ * (same pattern as the report and denovo_stats phases).
  */
-static uint64_t count_seqs(const std::string &path) {
-    std::ifstream ifs(path);
-    if (!ifs.is_open()) return 0;
-    uint64_t count = 0;
-    std::string line;
-    while (std::getline(ifs, line)) {
-        if (!line.empty() && (line[0] == '>' || line[0] == '@')) count++;
+static bool populate_per_read_output(smr_output_t *o,
+                                     Readfeed &readfeed,
+                                     Readstats &readstats,
+                                     KeyValueDatabase &kvdb,
+                                     Runopts &opts) {
+    uint64_t n = o->num_reads;
+    if (n == 0) return true;
+
+    o->read_ids   = static_cast<const char**>(calloc(n, sizeof(char*)));
+    o->aligned    = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->ref_index  = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->e_value    = static_cast<double*>(calloc(n, sizeof(double)));
+    o->identity   = static_cast<double*>(calloc(n, sizeof(double)));
+    o->coverage   = static_cast<double*>(calloc(n, sizeof(double)));
+    o->ref_start  = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->ref_end    = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->cigar      = static_cast<const char**>(calloc(n, sizeof(char*)));
+
+    if (!o->read_ids || !o->aligned || !o->ref_index || !o->e_value ||
+        !o->identity || !o->coverage || !o->ref_start || !o->ref_end || !o->cigar)
+        return false;
+
+    /* defaults for all reads */
+    for (uint64_t i = 0; i < n; i++) {
+        o->ref_index[i] = -1;
     }
-    return count;
+
+    Refstats refstats(opts, readstats);
+    References refs;
+    unsigned num_splits = readfeed.num_splits > 0 ? readfeed.num_splits : 1;
+
+    /*
+     * Helper lambda: iterate all splits in round-robin input order.
+     * Reads were distributed: input read i → split (i % num_splits), position (i / num_splits).
+     * To reconstruct input order: pull one read from each split in turn.
+     */
+    auto for_each_read = [&](auto callback) {
+        readfeed.init_reading();
+        uint64_t out_idx = 0;
+        bool any_remaining = true;
+        while (any_remaining && out_idx < n) {
+            any_remaining = false;
+            for (unsigned s = 0; s < num_splits && out_idx < n; ++s) {
+                Read rd;
+                if (readfeed.next(static_cast<int>(s), rd)) {
+                    any_remaining = true;
+                    callback(out_idx, rd);
+                    ++out_idx;
+                }
+            }
+        }
+    };
+
+    /* Pass 1: collect read IDs and basic alignment info from kvdb (no refs needed) */
+    uint64_t aligned_count = 0;
+    for_each_read([&](uint64_t idx, Read &read) {
+        read.init(opts);
+        read.load_db(kvdb);
+
+        std::string rid = extract_read_id(read.header);
+        o->read_ids[idx] = strdup(rid.c_str());
+
+        if (read.is_hit && !read.alignment.alignv.empty()) {
+            const auto &align = read.alignment.alignv[0];
+            o->aligned[idx]   = 1;
+            o->ref_index[idx] = static_cast<int32_t>(align.index_num);
+            o->ref_start[idx] = align.ref_begin1 + 1;
+            o->ref_end[idx]   = align.ref_end1 + 1;
+
+            /* E-value: K * m * n * exp(-λ * S) */
+            o->e_value[idx] = static_cast<double>(refstats.gumbel[align.index_num].second)
+                * refstats.full_ref[align.index_num]
+                * refstats.full_read[align.index_num]
+                * std::exp(-refstats.gumbel[align.index_num].first * align.score1);
+
+            /* CIGAR string */
+            uint32_t readlen = static_cast<uint32_t>(read.sequence.size());
+            o->cigar[idx] = strdup(build_cigar_string(align, readlen).c_str());
+
+            /* coverage from alignment coordinates (no refs needed) */
+            if (readlen > 0) {
+                o->coverage[idx] = static_cast<double>(align.read_end1 - align.read_begin1 + 1)
+                                 / readlen * 100.0;
+            }
+
+            ++aligned_count;
+        }
+    });
+    o->num_aligned = aligned_count;
+
+    /* Pass 2: compute %ID for aligned reads (requires loaded refs for sequence comparison) */
+    for (uint16_t ref_idx = 0; ref_idx < opts.indexfiles.size(); ++ref_idx) {
+        for (uint16_t idx_part = 0; idx_part < refstats.num_index_parts[ref_idx]; ++idx_part) {
+            refs.load(ref_idx, idx_part, opts, refstats);
+
+            for_each_read([&](uint64_t ri, Read &rd) {
+                if (o->aligned[ri] == 1) {
+                    rd.init(opts);
+                    rd.load_db(kvdb);
+                    if (!rd.alignment.alignv.empty()) {
+                        const auto &al = rd.alignment.alignv[0];
+                        if (al.index_num == ref_idx && al.part == idx_part) {
+                            if (rd.is03) rd.flip34();
+                            auto mgm = rd.calc_miss_gap_match(refs, al);
+                            o->identity[ri] = std::get<3>(mgm) * 100.0;
+                            o->coverage[ri] = std::get<4>(mgm) * 100.0;
+                        }
+                    }
+                }
+            });
+
+            refs.unload();
+        }
+    }
+
+    return true;
 }
 
 int smr_run(smr_context_t *ctx,
@@ -440,27 +562,188 @@ int smr_run(smr_context_t *ctx,
             if (!o) {
                 set_error(ctx, SMR_ERR_ALLOC, "failed to allocate smr_output_t");
                 return SMR_ERR_ALLOC;
-                /* wdguard destructor cleans up workdir */
             }
 
-            /* use readstats for authoritative total count */
             o->num_reads = readstats.all_reads_count;
 
-            /* count aligned from BLAST output (one line per alignment with --num_alignments 1) */
-            std::string blast_file = workdir + "/aligned.blast";
-            if (file_exists(blast_file.c_str())) {
-                o->num_aligned = count_lines(blast_file);
-            } else {
-                /* fallback: count aligned FASTA/FASTQ sequences */
-                std::string aligned_path = find_output_file(workdir + "/aligned");
-                if (!aligned_path.empty())
-                    o->num_aligned = count_seqs(aligned_path);
+            if (!populate_per_read_output(o, readfeed, readstats, kvdb, opts)) {
+                smr_output_free(o);
+                set_error(ctx, SMR_ERR_ALLOC, "failed to allocate per-read output arrays");
+                return SMR_ERR_ALLOC;
             }
 
             *out = o;
         }
 
         /* RAII guards handle cleanup on return */
+        set_error(ctx, SMR_OK, "");
+        return SMR_OK;
+
+    } catch (const smr_exit_requested &) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "unexpected --help/--version in library context");
+        return SMR_ERR_INVALID_CONFIG;
+    } catch (const std::exception &e) {
+        set_error(ctx, SMR_ERR_ALIGN, "%s", e.what());
+        return SMR_ERR_ALIGN;
+    } catch (...) {
+        set_error(ctx, SMR_ERR_ALIGN, "unknown exception in pipeline");
+        return SMR_ERR_ALIGN;
+    }
+}
+
+int smr_run_seqs(smr_context_t *ctx,
+                 const char **ref_paths, int32_t num_refs,
+                 const smr_seq_t *seqs, int32_t num_seqs,
+                 smr_output_t **out,
+                 smr_stats_t *stats) {
+    if (!ctx) return SMR_ERR_INVALID_CONFIG;
+
+    if (!ref_paths || num_refs <= 0) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "ref_paths is NULL or num_refs <= 0");
+        return SMR_ERR_INVALID_CONFIG;
+    }
+    if (!seqs || num_seqs <= 0) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "seqs is NULL or num_seqs <= 0");
+        return SMR_ERR_INVALID_CONFIG;
+    }
+
+    /* validate ref file existence */
+    for (int32_t i = 0; i < num_refs; i++) {
+        if (!ref_paths[i] || !file_exists(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file not found: %s",
+                      ref_paths[i] ? ref_paths[i] : "(null)");
+            return SMR_ERR_IO;
+        }
+        if (file_is_empty(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file is empty: %s", ref_paths[i]);
+            return SMR_ERR_IO;
+        }
+    }
+
+    /* validate sequences */
+    for (int32_t i = 0; i < num_seqs; i++) {
+        if (!seqs[i].id || !seqs[i].sequence) {
+            set_error(ctx, SMR_ERR_INVALID_CONFIG, "seq[%d] has NULL id or sequence", i);
+            return SMR_ERR_INVALID_CONFIG;
+        }
+        if (seqs[i].sequence[0] == '\0') {
+            set_error(ctx, SMR_ERR_INVALID_CONFIG, "seq[%d] has empty sequence", i);
+            return SMR_ERR_INVALID_CONFIG;
+        }
+    }
+
+    std::lock_guard<std::mutex> run_lock(g_run_mutex);
+    auto wall_start = std::chrono::high_resolution_clock::now();
+
+    std::string workdir;
+    bool workdir_is_temp = (ctx->config.workdir == nullptr);
+    if (!workdir_is_temp) {
+        workdir = ctx->config.workdir;
+    } else {
+        int run_id = g_run_counter.fetch_add(1);
+        std::ostringstream ss;
+        ss << "/tmp/smr_api_" << getpid() << "_" << run_id;
+        workdir = ss.str();
+    }
+
+    WorkdirGuard wdguard(workdir, workdir_is_temp);
+    LogRouteGuard loguard(ctx->config.log_callback, ctx->config.log_user_data);
+    FdRedirectGuard fdguard;
+
+    try {
+        /* Runopts requires --reads pointing to a valid file for option parsing
+         * and format detection. Write a minimal placeholder matching the actual
+         * format. The real reads are served from the MEMORY-mode Readfeed below;
+         * this file is only touched by Runopts validation and is cleaned up
+         * by WorkdirGuard. */
+        std::filesystem::create_directories(workdir);
+        bool has_qual = (seqs[0].quality != nullptr);
+        std::string placeholder_ext = has_qual ? ".fq" : ".fa";
+        std::string placeholder_reads = workdir + "/placeholder_reads" + placeholder_ext;
+        {
+            std::ofstream ofs(placeholder_reads);
+            if (has_qual)
+                ofs << "@placeholder\nA\n+\nI\n";
+            else
+                ofs << ">placeholder\nA\n";
+        }
+        const char *dummy_read_paths[] = { placeholder_reads.c_str() };
+
+        auto args = build_argv(ctx->config, ref_paths, num_refs, dummy_read_paths, 1, workdir);
+        std::vector<char*> argv_ptrs;
+        for (auto &a : args) argv_ptrs.push_back(const_cast<char*>(a.c_str()));
+        argv_ptrs.push_back(nullptr);
+
+        bool dryrun = false;
+        Runopts opts(static_cast<int>(argv_ptrs.size() - 1), argv_ptrs.data(), dryrun);
+
+        ctx_log(ctx, SMR_LOG_INFO, "pipeline starting (in-memory): %d refs, %d seqs", num_refs, num_seqs);
+
+        /* build in-memory vectors from smr_seq_t array */
+        std::vector<std::string> ids, sequences, quals;
+        ids.reserve(num_seqs);
+        sequences.reserve(num_seqs);
+        if (has_qual) quals.reserve(num_seqs);
+        for (int32_t i = 0; i < num_seqs; i++) {
+            bool this_has_qual = (seqs[i].quality != nullptr);
+            if (this_has_qual != has_qual) {
+                set_error(ctx, SMR_ERR_INVALID_CONFIG,
+                          "seq[%d]: all sequences must have quality strings or none", i);
+                return SMR_ERR_INVALID_CONFIG;
+            }
+            ids.emplace_back(seqs[i].id);
+            sequences.emplace_back(seqs[i].sequence);
+            if (has_qual)
+                quals.emplace_back(seqs[i].quality);
+        }
+
+        Index index(opts);
+        KeyValueDatabase kvdb(opts.kvdbdir.string());
+
+        /* construct Readfeed in MEMORY mode — no file I/O for reads */
+        auto basedir = opts.readb_dir;
+        Readfeed readfeed(std::move(ids), std::move(sequences), std::move(quals),
+                          opts.num_proc_thread, basedir, opts.is_paired);
+        Readstats readstats(readfeed.num_reads_tot, readfeed.length_all,
+                            readfeed.min_read_len, readfeed.max_read_len, kvdb, opts);
+
+        align(readfeed, readstats, index, kvdb, opts);
+        writeSummary(readstats, opts);
+        writeReports(readfeed, readstats, kvdb, opts);
+
+        ctx_log(ctx, SMR_LOG_INFO, "pipeline complete");
+
+        if (stats) {
+            memset(stats, 0, sizeof(*stats));
+            stats->total_reads = readstats.all_reads_count;
+            stats->total_aligned = readstats.num_aligned.load();
+            stats->total_id_cov_pass = readstats.n_yid_ycov.load();
+            stats->total_denovo = readstats.num_denovo.load();
+            stats->min_read_len = readstats.min_read_len;
+            stats->max_read_len = readstats.max_read_len;
+            auto wall_end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = wall_end - wall_start;
+            stats->wall_time_sec = elapsed.count();
+        }
+
+        if (out) {
+            auto *o = static_cast<smr_output_t *>(calloc(1, sizeof(smr_output_t)));
+            if (!o) {
+                set_error(ctx, SMR_ERR_ALLOC, "failed to allocate smr_output_t");
+                return SMR_ERR_ALLOC;
+            }
+
+            o->num_reads = readstats.all_reads_count;
+
+            if (!populate_per_read_output(o, readfeed, readstats, kvdb, opts)) {
+                smr_output_free(o);
+                set_error(ctx, SMR_ERR_ALLOC, "failed to allocate per-read output arrays");
+                return SMR_ERR_ALLOC;
+            }
+
+            *out = o;
+        }
+
         set_error(ctx, SMR_OK, "");
         return SMR_OK;
 

@@ -68,6 +68,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include "common.hpp"
 #include "readfeed.hpp"
+#include "read.hpp"
 
 #include <vector>
 #include <iostream>
@@ -133,6 +134,62 @@ Readfeed::Readfeed(FEED_TYPE type, std::vector<std::string>& readfiles, const un
 {
 	init(readfiles);
 } //~Readfeed::Readfeed 2
+
+/*
+ * Memory-mode constructor: sequences held in-memory vectors, no file I/O.
+ * Distributes reads round-robin across num_parts virtual splits.
+ */
+Readfeed::Readfeed(std::vector<std::string> ids, std::vector<std::string> seqs, std::vector<std::string> quals,
+                   unsigned num_parts, std::filesystem::path& basedir, bool is_paired)
+	:
+	type(FEED_TYPE::MEMORY),
+	is_done(false),
+	is_ready(true),
+	is_format_defined(true),
+	is_two_files(false),
+	is_paired(is_paired),
+	num_orig_files(1),
+	num_splits(num_parts),
+	num_split_files(0),
+	num_sense(is_paired ? 2u : 1u),
+	num_reads_tot(ids.size()),
+	length_all(0),
+	min_read_len(UINT32_MAX),
+	max_read_len(0),
+	basedir(basedir)
+{
+	bool has_qual = !quals.empty();
+	BIO_FORMAT fmt = has_qual ? BIO_FORMAT::FASTQ : BIO_FORMAT::FASTA;
+
+	/* synthetic orig_files entry so report phase can determine output format */
+	orig_files.resize(1);
+	orig_files[0].isFastq = has_qual;
+	orig_files[0].isFasta = !has_qual;
+	orig_files[0].isZip = false;
+
+	mem_reads.resize(num_parts);
+	mem_idx.resize(num_parts, 0);
+
+	for (size_t i = 0; i < ids.size(); ++i) {
+		unsigned split = static_cast<unsigned>(i % num_parts);
+
+		auto seqlen = static_cast<uint32_t>(seqs[i].size());
+		length_all += seqlen;
+		if (seqlen < min_read_len) min_read_len = seqlen;
+		if (seqlen > max_read_len) max_read_len = seqlen;
+
+		std::string id_str = std::to_string(split) + "_" + std::to_string(i / num_parts);
+		std::string header = (has_qual ? "@" : ">") + ids[i];
+
+		mem_reads[split].emplace_back(Read(
+			std::move(id_str), split, i / num_parts,
+			std::move(header), std::move(seqs[i]),
+			has_qual ? std::move(quals[i]) : std::string(),
+			fmt));
+	}
+
+	if (min_read_len == UINT32_MAX) min_read_len = 0;
+}
 
 //Readfeed::~Readfeed() {}
 
@@ -566,7 +623,7 @@ bool Readfeed::next(int inext, std::string& readstr, bool is_orig, std::vector<R
 } // ~Readfeed::next
 
 /*
- * public function
+ * public function (string-based, used by split/count internals only)
  */
 bool Readfeed::next(int inext, std::string& readstr)
 {
@@ -574,6 +631,131 @@ bool Readfeed::next(int inext, std::string& readstr)
 	if (type == FEED_TYPE::SPLIT_READS)
 		has_read = next(inext, readstr, false, split_files);
 	return has_read;
+}
+
+/*
+ * Structured public next(): populates a Read directly, no intermediate string.
+ * For SPLIT_READS: reads lines from split files and fills Read fields.
+ * For MEMORY: returns pre-built Read from in-memory storage.
+ */
+bool Readfeed::next(int inext, Read& read)
+{
+	if (type == FEED_TYPE::MEMORY) {
+		if (mem_idx[inext] >= mem_reads[inext].size())
+			return false;
+		/* copy, not move — mem_reads must survive for rewind/reuse
+		 * (e.g. populate_per_read_output re-iterates after alignment) */
+		read = mem_reads[inext][mem_idx[inext]++];
+		return true;
+	}
+
+	// SPLIT_READS: read lines from file, populate Read fields directly
+	std::string line;
+	auto stat = vstate_in[inext].last_stat;
+	auto& files = split_files;
+
+	std::string sequence;
+	std::string quality;
+	std::string header;
+	bool header_set = false;
+
+	if (vstate_in[inext].last_header.size() > 0) {
+		header = vstate_in[inext].last_header;
+		header_set = true;
+		vstate_in[inext].last_header = "";
+	}
+
+	for (auto count = vstate_in[inext].last_count; !vstate_in[inext].is_done; ++count)
+	{
+		line = "";
+		if (!vstate_in[inext].is_done) {
+			if (files[inext].isZip) {
+				stat = vzlib_in[inext].getline(ifsv[inext], line);
+			}
+			else {
+				if (ifsv[inext].eof())
+					stat = RL_END;
+				else
+					std::getline(ifsv[inext], line);
+			}
+		}
+
+		if (!line.empty()) {
+			line.erase(std::find_if(line.rbegin(), line.rend(), [l = std::locale{}](auto ch) { return !std::isspace(ch, l); }).base(), line.end());
+		}
+
+		if (stat == RL_END) {
+			if (!line.empty()) {
+				if (header_set && quality.empty() && files[inext].isFastq && count == 3)
+					quality = line;
+				else
+					sequence += line;
+			}
+			vstate_in[inext].is_done = true;
+			auto FR = (inext & 1) == 0 ? FWD : REV;
+			INFO("EOF ", FR, " reached. Total reads: ", ++vstate_in[inext].read_count);
+			break;
+		}
+
+		if (stat == RL_ERR) {
+			auto FR = (inext & 1) == 0 ? FWD : REV;
+			throw std::runtime_error(std::string("reading from ") + FR + " file");
+		}
+
+		if (line.empty()) {
+			--count;
+			continue;
+		}
+
+		++vstate_in[inext].line_count;
+
+		if (vstate_in[inext].line_count == 1) {
+			files[inext].isFastq = (line[0] == FASTQ_HEADER_START);
+			files[inext].isFasta = (line[0] == FASTA_HEADER_START);
+		}
+
+		if (count == 4 && files[inext].isFastq)
+			count = 0;
+
+		if ((files[inext].isFasta && line[0] == FASTA_HEADER_START) || (files[inext].isFastq && count == 0))
+		{
+			if (!header_set) {
+				header = line;
+				header_set = true;
+				count = 0;
+			}
+			else {
+				// current read is complete, save this header for next call
+				vstate_in[inext].last_header = line;
+				vstate_in[inext].last_count = 1;
+				vstate_in[inext].last_stat = stat;
+				break;
+			}
+		}
+		else {
+			if (files[inext].isFastq) {
+				if (count == 2) continue; // skip '+' line
+				if (count == 3) { quality = line; continue; }
+				sequence += line;
+			}
+			else {
+				sequence += line; // possibly multiline fasta
+			}
+		}
+	}
+
+	++vstate_in[inext].read_count;
+
+	if (!header_set || sequence.empty())
+		return false;
+
+	BIO_FORMAT fmt = header[0] == FASTA_HEADER_START ? BIO_FORMAT::FASTA : BIO_FORMAT::FASTQ;
+	std::string id_str = std::to_string(inext) + "_" + std::to_string(vstate_in[inext].read_count - 1);
+
+	read = Read(std::move(id_str), static_cast<size_t>(inext),
+	            vstate_in[inext].read_count - 1,
+	            std::move(header), std::move(sequence), std::move(quality), fmt);
+	return true;
 }
 
 /**
@@ -599,6 +781,10 @@ void Readfeed::rewind() {
   rewind IN feed
 */
 void Readfeed::rewind_in() {
+	if (type == FEED_TYPE::MEMORY) {
+		for (auto& idx : mem_idx) idx = 0;
+		return;
+	}
 	for (std::size_t i = 0; i < ifsv.size(); ++i) {
 		if (ifsv[i].is_open()) {
 			if (ifsv[i].rdstate() != std::ios_base::goodbit) {
@@ -1077,6 +1263,7 @@ void Readfeed::write_descriptor()
 
 void Readfeed::init_vzlib_in()
 {
+	if (type == FEED_TYPE::MEMORY) return;
 	vzlib_in.resize(split_files.size());
 	for (std::size_t i = 0; i < vzlib_in.size(); ++i) {
 		if (split_files[i].isZip) vzlib_in[i].init();
@@ -1084,7 +1271,7 @@ void Readfeed::init_vzlib_in()
 }
 
 /*
- * called at the start of reading the split files 
+ * called at the start of reading the split files
  * init readfeed for reading:
  *   ifsv
  *   vstate_in
@@ -1092,6 +1279,11 @@ void Readfeed::init_vzlib_in()
  */
 void Readfeed::init_reading()
 {
+	if (type == FEED_TYPE::MEMORY) {
+		for (auto& idx : mem_idx) idx = 0;
+		return;
+	}
+
 	for (std::size_t i = 0; i < vstate_in.size(); ++i) {
 		vstate_in[i].reset();
 	}

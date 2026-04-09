@@ -89,7 +89,6 @@ void report(const uint32_t& id,
 	uint64_t num_invalid = 0; // empty or invalid reads count
 	//size_t denovo_n = 0; // count of denovo reads
 	uint16_t num_reads = opts.is_paired ? 2 : 1; // i.e. max 2
-	std::string readstr;
 	std::vector<Read> reads; // two reads if paired, a single read otherwise
 
 	INFO_MEM("Report Processor: ", id, " thread: ", std::this_thread::get_id(), " started.");
@@ -101,15 +100,15 @@ void report(const uint32_t& id,
 		uint32_t idx = id * readfeed.num_sense; // index into split_files array
 		for (uint16_t i = 0; i < num_reads; ++i)
 		{
-			if (readfeed.next(idx, readstr))
+			reads.emplace_back();
+			if (readfeed.next(idx, reads.back()))
 			{
-				reads.emplace_back(Read(readstr));
-				reads[i].init(opts);
-				reads[i].load_db(kvdb);
-				readstr.resize(0);
+				reads.back().init(opts);
+				reads.back().load_db(kvdb);
 				++countReads;
 			}
 			else {
+				reads.pop_back();
 				isDone = true;
 			}
 			if (opts.is_paired) idx ^= 1; // switch fwd-rev
@@ -173,7 +172,7 @@ void writeReports(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 	std::chrono::duration<double> elapsed;
 
 	uint32_t nthreads = 0;
-	if (readfeed.type == FEED_TYPE::SPLIT_READS) {
+	if (readfeed.type != FEED_TYPE::LOCKLESS) {
 		nthreads = opts.num_proc_thread;
 		readfeed.init_reading(); // prepare readfeed
 	}
@@ -207,7 +206,7 @@ void writeReports(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 			start_i = std::chrono::high_resolution_clock::now(); // index processing starts
 
 			// start processing threads
-			if (opts.feed_type == FEED_TYPE::SPLIT_READS) {
+			if (opts.feed_type != FEED_TYPE::LOCKLESS) {
 				for (uint32_t i = 0; i < nthreads; ++i) {
 					tpool.emplace_back(std::thread(report, i, std::ref(readfeed),
 						std::ref(refs), std::ref(refstats), std::ref(kvdb), std::ref(output), std::ref(opts)));
