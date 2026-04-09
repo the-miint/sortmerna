@@ -140,6 +140,8 @@ typedef struct smr_output {
     int32_t    *ref_end;       /* 1-based end on reference */
     const char **cigar;        /* CIGAR string, NULL if unaligned;
                                   library-owned, smr_output_free casts away const */
+    const char **ref_name;     /* reference sequence ID, NULL if unaligned;
+                                  library-owned, smr_output_free casts away const */
 } smr_output_t;
 
 typedef struct smr_stats {

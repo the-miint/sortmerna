@@ -137,7 +137,14 @@ Readfeed::Readfeed(FEED_TYPE type, std::vector<std::string>& readfiles, const un
 
 /*
  * Memory-mode constructor: sequences held in-memory vectors, no file I/O.
- * Distributes reads round-robin across num_parts virtual splits.
+ *
+ * Non-paired: distributes reads round-robin across num_parts splits.
+ *   Read i → split (i % num_parts).
+ *
+ * Paired (interleaved input: [fwd0,rev0,fwd1,rev1,...]):
+ *   Creates num_parts * 2 splits (even=fwd, odd=rev).
+ *   Pair j → fwd to split (j % num_parts)*2, rev to split (j % num_parts)*2+1.
+ *   Thread i reads from splits i*2 (fwd) and i*2+1 (rev) via idx^=1.
  */
 Readfeed::Readfeed(std::vector<std::string> ids, std::vector<std::string> seqs, std::vector<std::string> quals,
                    unsigned num_parts, std::filesystem::path& basedir, bool is_paired)
@@ -162,30 +169,66 @@ Readfeed::Readfeed(std::vector<std::string> ids, std::vector<std::string> seqs, 
 	BIO_FORMAT fmt = has_qual ? BIO_FORMAT::FASTQ : BIO_FORMAT::FASTA;
 
 	/* synthetic orig_files entry so report phase can determine output format */
-	orig_files.resize(1);
+	orig_files.resize(is_paired ? 2 : 1);
 	orig_files[0].isFastq = has_qual;
 	orig_files[0].isFasta = !has_qual;
 	orig_files[0].isZip = false;
+	if (is_paired) {
+		orig_files[1].isFastq = has_qual;
+		orig_files[1].isFasta = !has_qual;
+		orig_files[1].isZip = false;
+		num_orig_files = 2;
+	}
 
-	mem_reads.resize(num_parts);
-	mem_idx.resize(num_parts, 0);
+	unsigned total_splits = num_parts * num_sense;
+	mem_reads.resize(total_splits);
+	mem_idx.resize(total_splits, 0);
 
-	for (size_t i = 0; i < ids.size(); ++i) {
-		unsigned split = static_cast<unsigned>(i % num_parts);
+	if (is_paired) {
+		/* interleaved: ids[2j]=fwd, ids[2j+1]=rev */
+		size_t num_pairs = ids.size() / 2;
+		for (size_t j = 0; j < num_pairs; ++j) {
+			unsigned fwd_split = static_cast<unsigned>((j % num_parts) * 2);
+			unsigned rev_split = fwd_split + 1;
+			unsigned read_num = static_cast<unsigned>(j / num_parts);
 
-		auto seqlen = static_cast<uint32_t>(seqs[i].size());
-		length_all += seqlen;
-		if (seqlen < min_read_len) min_read_len = seqlen;
-		if (seqlen > max_read_len) max_read_len = seqlen;
+			for (int sense = 0; sense < 2; ++sense) {
+				size_t idx = j * 2 + sense;
+				unsigned split = sense == 0 ? fwd_split : rev_split;
 
-		std::string id_str = std::to_string(split) + "_" + std::to_string(i / num_parts);
-		std::string header = (has_qual ? "@" : ">") + ids[i];
+				auto seqlen = static_cast<uint32_t>(seqs[idx].size());
+				length_all += seqlen;
+				if (seqlen < min_read_len) min_read_len = seqlen;
+				if (seqlen > max_read_len) max_read_len = seqlen;
 
-		mem_reads[split].emplace_back(Read(
-			std::move(id_str), split, i / num_parts,
-			std::move(header), std::move(seqs[i]),
-			has_qual ? std::move(quals[i]) : std::string(),
-			fmt));
+				std::string id_str = std::to_string(split) + "_" + std::to_string(read_num);
+				std::string header = (has_qual ? "@" : ">") + ids[idx];
+
+				mem_reads[split].emplace_back(Read(
+					std::move(id_str), 0, read_num,
+					std::move(header), std::move(seqs[idx]),
+					has_qual ? std::move(quals[idx]) : std::string(),
+					fmt));
+			}
+		}
+	} else {
+		for (size_t i = 0; i < ids.size(); ++i) {
+			unsigned split = static_cast<unsigned>(i % num_parts);
+
+			auto seqlen = static_cast<uint32_t>(seqs[i].size());
+			length_all += seqlen;
+			if (seqlen < min_read_len) min_read_len = seqlen;
+			if (seqlen > max_read_len) max_read_len = seqlen;
+
+			std::string id_str = std::to_string(split) + "_" + std::to_string(i / num_parts);
+			std::string header = (has_qual ? "@" : ">") + ids[i];
+
+			mem_reads[split].emplace_back(Read(
+				std::move(id_str), 0, i / num_parts,
+				std::move(header), std::move(seqs[i]),
+				has_qual ? std::move(quals[i]) : std::string(),
+				fmt));
+		}
 	}
 
 	if (min_read_len == UINT32_MAX) min_read_len = 0;

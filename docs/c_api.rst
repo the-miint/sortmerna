@@ -130,7 +130,7 @@ Configuration
    ``mismatch``              ``int32_t``  -3
    ``gap_open``              ``int32_t``  5
    ``gap_ext``               ``int32_t``  2
-   ``score_N``               ``int32_t``  0
+   ``score_N``               ``int32_t``  -3
    ``evalue``                ``double``   ``SMR_EVALUE_OFF`` (-1.0)
    ``seed_win_len``          ``uint32_t`` 18
    ``num_alignments``        ``uint32_t`` 1
@@ -271,7 +271,9 @@ Computation
    :param ctx: Context created by ``smr_ctx_create``.
    :param ref_paths: Array of reference FASTA file paths.
    :param num_refs: Number of reference files (must be > 0).
-   :param seqs: Array of ``smr_seq_t`` input sequences.
+   :param seqs: Array of ``smr_seq_t`` input sequences. For paired-end mode
+                (``cfg.paired = 1``), sequences must be interleaved:
+                ``[fwd0, rev0, fwd1, rev1, ...]``. ``num_seqs`` must be even.
    :param num_seqs: Number of input sequences (must be > 0).
    :param out: Pointer to receive the output struct. May be NULL.
    :param stats: Pointer to receive run statistics. May be NULL.
@@ -314,6 +316,7 @@ Computation
    ``ref_start``       ``int32_t*``      1-based start on reference
    ``ref_end``         ``int32_t*``      1-based end on reference
    ``cigar``           ``const char**``  CIGAR string, NULL if unaligned
+   ``ref_name``        ``const char**``  Reference sequence ID, NULL if unaligned
    ==================  ================  ===========================================
 
 .. c:type:: smr_stats_t

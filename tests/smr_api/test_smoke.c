@@ -527,7 +527,6 @@ TEST(test_no_stdout_during_run) {
     ASSERT_EQ_INT((int)captured_size, 0);
 }
 
-static int _run_log_count = 0;
 static void run_log_cb(int level, const char *msg, void *user_data) {
     (void)level; (void)msg;
     int *counter = (int *)user_data;
@@ -571,10 +570,10 @@ TEST(test_null_log_callback_silent) {
 
 /* ---- Phase 7: Golden file comparison ---- */
 
+static char _tmpdir_buf[256];
 static char *make_tmpdir(void) {
-    static char tmpl[256];
-    snprintf(tmpl, sizeof(tmpl), "/tmp/smr_test_XXXXXX");
-    return mkdtemp(tmpl);
+    snprintf(_tmpdir_buf, sizeof(_tmpdir_buf), "/tmp/smr_test_XXXXXX");
+    return mkdtemp(_tmpdir_buf);
 }
 
 static void rm_rf(const char *dir) {
@@ -954,6 +953,128 @@ TEST(test_run_seqs_empty_seq_error) {
     smr_ctx_destroy(ctx);
 }
 
+TEST(test_run_seqs_quality_length_mismatch) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_seq_t seqs[1];
+    seqs[0].id = "test";
+    seqs[0].sequence = "ACGT";
+    seqs[0].quality = "II";  /* too short */
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_ERR_INVALID_CONFIG);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_seqs_paired_odd_count_error) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.paired = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_seq_t seqs[3];
+    seqs[0].id = "r1"; seqs[0].sequence = "ACGT"; seqs[0].quality = NULL;
+    seqs[1].id = "r2"; seqs[1].sequence = "TGCA"; seqs[1].quality = NULL;
+    seqs[2].id = "r3"; seqs[2].sequence = "AAAA"; seqs[2].quality = NULL;
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 3, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_ERR_INVALID_CONFIG);
+    smr_ctx_destroy(ctx);
+}
+
+/* ---- Phase 12: ref_name output ---- */
+
+TEST(test_run_tiny_ref_name) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_NOT_NULL(out->ref_name);
+    ASSERT_NOT_NULL(out->ref_name[0]);
+    /* golden: AB271211 aligned to Unc49508 */
+    ASSERT_STR_EQ(out->ref_name[0], "Unc49508");
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_small_ref_name) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_NOT_NULL(out->ref_name);
+    /* golden: BD.ERD505_1 → EU602318, unaligned reads have NULL ref_name */
+    ASSERT_NOT_NULL(out->ref_name[0]);
+    ASSERT_STR_EQ(out->ref_name[0], "EU602318");
+    ASSERT_NULL(out->ref_name[4]); /* random1 — unaligned */
+    ASSERT_NULL(out->ref_name[5]); /* random2 — unaligned */
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_seqs_paired) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.paired = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+
+    /* 2 interleaved pairs (4 sequences total) from the small dataset */
+    smr_seq_t seqs[4];
+    seqs[0].id = "BD.ERD505_1";
+    seqs[0].sequence = "AACGTAGGTGGCAAGCGTTGTCCGGAATTACTGGGTGTAAAGGGAGCGCAGGCGGAAAAGCAAGTTGGACGTGAAATCTATGGGCTCAACCCATAGCGTG";
+    seqs[0].quality = NULL;
+    seqs[1].id = "BD.NBS1076_0";
+    seqs[1].sequence = "TACGGAGGGTGCAAGCGTTAATCCGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCACGGGCTCAACCTGG";
+    seqs[1].quality = NULL;
+    seqs[2].id = "LD.Glosor1_17";
+    seqs[2].sequence = "TACGGAGGGTGCAAGCGTTAATCGGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCCCGGGCTCAACCTGGGAACTG";
+    seqs[2].quality = NULL;
+    seqs[3].id = "BD.ERD510_20";
+    seqs[3].sequence = "TACGGAGGGTGCAAGCGTTAATCGGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCCCGGGCTCAACCTGGGAACTG";
+    seqs[3].quality = NULL;
+
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 4, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 4);
+    ASSERT_NOT_NULL(out->read_ids);
+    /* verify interleaved input order is preserved */
+    ASSERT_STR_EQ(out->read_ids[0], "BD.ERD505_1");
+    ASSERT_STR_EQ(out->read_ids[1], "BD.NBS1076_0");
+    ASSERT_STR_EQ(out->read_ids[2], "LD.Glosor1_17");
+    ASSERT_STR_EQ(out->read_ids[3], "BD.ERD510_20");
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -1029,4 +1150,10 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_run_seqs_tiny);
     RUN_TEST(test_run_seqs_null_error);
     RUN_TEST(test_run_seqs_empty_seq_error);
+    RUN_TEST(test_run_seqs_quality_length_mismatch);
+    RUN_TEST(test_run_seqs_paired_odd_count_error);
+    RUN_TEST(test_run_seqs_paired);
+    /* Phase 12: ref_name output */
+    RUN_TEST(test_run_tiny_ref_name);
+    RUN_TEST(test_run_small_ref_name);
 TEST_MAIN_END()

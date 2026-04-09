@@ -346,9 +346,10 @@ static bool populate_per_read_output(smr_output_t *o,
     o->ref_start  = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
     o->ref_end    = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
     o->cigar      = static_cast<const char**>(calloc(n, sizeof(char*)));
+    o->ref_name   = static_cast<const char**>(calloc(n, sizeof(char*)));
 
     if (!o->read_ids || !o->aligned || !o->ref_index || !o->e_value ||
-        !o->identity || !o->coverage || !o->ref_start || !o->ref_end || !o->cigar)
+        !o->identity || !o->coverage || !o->ref_start || !o->ref_end || !o->cigar || !o->ref_name)
         return false;
 
     /* defaults for all reads */
@@ -358,12 +359,18 @@ static bool populate_per_read_output(smr_output_t *o,
 
     Refstats refstats(opts, readstats);
     References refs;
-    unsigned num_splits = readfeed.num_splits > 0 ? readfeed.num_splits : 1;
+    unsigned num_parts = readfeed.num_splits > 0 ? readfeed.num_splits : 1;
+    unsigned num_sense = readfeed.num_sense;
 
     /*
      * Helper lambda: iterate all splits in round-robin input order.
-     * Reads were distributed: input read i → split (i % num_splits), position (i / num_splits).
-     * To reconstruct input order: pull one read from each split in turn.
+     *
+     * Non-paired: reads distributed as input[i] → split (i % num_parts).
+     *   Reconstruct: pull one from each of num_parts splits per round.
+     *
+     * Paired: input is interleaved [fwd0,rev0,fwd1,rev1,...].
+     *   Pair j → fwd split (j%num_parts)*2, rev split (j%num_parts)*2+1.
+     *   Reconstruct: for each partition p, pull fwd then rev.
      */
     auto for_each_read = [&](auto callback) {
         readfeed.init_reading();
@@ -371,12 +378,15 @@ static bool populate_per_read_output(smr_output_t *o,
         bool any_remaining = true;
         while (any_remaining && out_idx < n) {
             any_remaining = false;
-            for (unsigned s = 0; s < num_splits && out_idx < n; ++s) {
-                Read rd;
-                if (readfeed.next(static_cast<int>(s), rd)) {
-                    any_remaining = true;
-                    callback(out_idx, rd);
-                    ++out_idx;
+            for (unsigned p = 0; p < num_parts && out_idx < n; ++p) {
+                for (unsigned s = 0; s < num_sense && out_idx < n; ++s) {
+                    unsigned split = p * num_sense + s;
+                    Read rd;
+                    if (readfeed.next(static_cast<int>(split), rd)) {
+                        any_remaining = true;
+                        callback(out_idx, rd);
+                        ++out_idx;
+                    }
                 }
             }
         }
@@ -435,6 +445,7 @@ static bool populate_per_read_output(smr_output_t *o,
                             auto mgm = rd.calc_miss_gap_match(refs, al);
                             o->identity[ri] = std::get<3>(mgm) * 100.0;
                             o->coverage[ri] = std::get<4>(mgm) * 100.0;
+                            o->ref_name[ri] = strdup(refs.buffer[al.ref_num].id.c_str());
                         }
                     }
                 }
@@ -606,6 +617,11 @@ int smr_run_seqs(smr_context_t *ctx,
         set_error(ctx, SMR_ERR_INVALID_CONFIG, "seqs is NULL or num_seqs <= 0");
         return SMR_ERR_INVALID_CONFIG;
     }
+    if (ctx->config.paired && (num_seqs % 2 != 0)) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG,
+                  "paired mode requires even num_seqs (interleaved fwd/rev); got %d", num_seqs);
+        return SMR_ERR_INVALID_CONFIG;
+    }
 
     /* validate ref file existence */
     for (int32_t i = 0; i < num_refs; i++) {
@@ -620,7 +636,8 @@ int smr_run_seqs(smr_context_t *ctx,
         }
     }
 
-    /* validate sequences */
+    /* validate sequences (all checks before acquiring the mutex) */
+    bool has_qual = (seqs[0].quality != nullptr);
     for (int32_t i = 0; i < num_seqs; i++) {
         if (!seqs[i].id || !seqs[i].sequence) {
             set_error(ctx, SMR_ERR_INVALID_CONFIG, "seq[%d] has NULL id or sequence", i);
@@ -628,6 +645,17 @@ int smr_run_seqs(smr_context_t *ctx,
         }
         if (seqs[i].sequence[0] == '\0') {
             set_error(ctx, SMR_ERR_INVALID_CONFIG, "seq[%d] has empty sequence", i);
+            return SMR_ERR_INVALID_CONFIG;
+        }
+        if (seqs[i].quality && strlen(seqs[i].quality) != strlen(seqs[i].sequence)) {
+            set_error(ctx, SMR_ERR_INVALID_CONFIG,
+                      "seq[%d] quality length != sequence length", i);
+            return SMR_ERR_INVALID_CONFIG;
+        }
+        bool this_has_qual = (seqs[i].quality != nullptr);
+        if (this_has_qual != has_qual) {
+            set_error(ctx, SMR_ERR_INVALID_CONFIG,
+                      "seq[%d]: all sequences must have quality strings or none", i);
             return SMR_ERR_INVALID_CONFIG;
         }
     }
@@ -657,7 +685,6 @@ int smr_run_seqs(smr_context_t *ctx,
          * this file is only touched by Runopts validation and is cleaned up
          * by WorkdirGuard. */
         std::filesystem::create_directories(workdir);
-        bool has_qual = (seqs[0].quality != nullptr);
         std::string placeholder_ext = has_qual ? ".fq" : ".fa";
         std::string placeholder_reads = workdir + "/placeholder_reads" + placeholder_ext;
         {
@@ -679,18 +706,13 @@ int smr_run_seqs(smr_context_t *ctx,
 
         ctx_log(ctx, SMR_LOG_INFO, "pipeline starting (in-memory): %d refs, %d seqs", num_refs, num_seqs);
 
-        /* build in-memory vectors from smr_seq_t array */
+        /* build in-memory vectors from smr_seq_t array
+         * (quality consistency already validated pre-lock) */
         std::vector<std::string> ids, sequences, quals;
         ids.reserve(num_seqs);
         sequences.reserve(num_seqs);
         if (has_qual) quals.reserve(num_seqs);
         for (int32_t i = 0; i < num_seqs; i++) {
-            bool this_has_qual = (seqs[i].quality != nullptr);
-            if (this_has_qual != has_qual) {
-                set_error(ctx, SMR_ERR_INVALID_CONFIG,
-                          "seq[%d]: all sequences must have quality strings or none", i);
-                return SMR_ERR_INVALID_CONFIG;
-            }
             ids.emplace_back(seqs[i].id);
             sequences.emplace_back(seqs[i].sequence);
             if (has_qual)
@@ -771,6 +793,11 @@ void smr_output_free(smr_output_t *out) {
         for (uint64_t i = 0; i < out->num_reads; i++)
             free(const_cast<char*>(out->cigar[i]));
         free(const_cast<char**>(out->cigar));
+    }
+    if (out->ref_name) {
+        for (uint64_t i = 0; i < out->num_reads; i++)
+            free(const_cast<char*>(out->ref_name[i]));
+        free(const_cast<char**>(out->ref_name));
     }
     free(out->aligned);
     free(out->ref_index);
