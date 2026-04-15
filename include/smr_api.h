@@ -122,9 +122,7 @@ int         smr_last_error_code(const smr_context_t *ctx);
  * and remains valid after smr_ctx_destroy().
  *
  * num_reads and num_aligned are always populated.
- * Per-read array fields (read_ids, aligned, e_value, etc.) are reserved
- * for future implementation and will be NULL until then. Check for NULL
- * before accessing. When populated, arrays are indexed [0 .. num_reads-1].
+ * Per-read arrays are indexed [0 .. num_reads-1] in input order.
  * Coordinates (ref_start, ref_end) are 1-based, matching BLAST/SAM convention.
  */
 typedef struct smr_output {
@@ -142,6 +140,9 @@ typedef struct smr_output {
                                   library-owned, smr_output_free casts away const */
     const char **ref_name;     /* reference sequence ID, NULL if unaligned;
                                   library-owned, smr_output_free casts away const */
+    int32_t    *strand;        /* 1=forward, 0=reverse-complement; -1 if unaligned */
+    int32_t    *score;         /* Smith-Waterman alignment score; -1 if unaligned */
+    int32_t    *edit_distance; /* mismatches + gaps; -1 if unaligned */
 } smr_output_t;
 
 typedef struct smr_stats {

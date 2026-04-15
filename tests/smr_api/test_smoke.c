@@ -1075,6 +1075,163 @@ TEST(test_run_seqs_paired) {
     smr_ctx_destroy(ctx);
 }
 
+/* ---- Phase 13: strand / score / edit_distance output ---- */
+
+TEST(test_run_tiny_strand_score_edit) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[]  = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_EQ_U64(out->num_aligned, 1);
+
+    /* arrays must be non-NULL */
+    ASSERT_NOT_NULL(out->strand);
+    ASSERT_NOT_NULL(out->score);
+    ASSERT_NOT_NULL(out->edit_distance);
+
+    /* golden: AB271211 FLAG=0 -> forward, AS:i=2430, NM:i=94 */
+    ASSERT_EQ_INT(out->strand[0], 1);
+    ASSERT_EQ_INT(out->score[0], 2430);
+    ASSERT_EQ_INT(out->edit_distance[0], 94);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_small_strand_score_edit) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[]  = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/set7_arc_bac_16S_database_match.fasta" };
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 6);
+    ASSERT_EQ_U64(out->num_aligned, 4);
+
+    ASSERT_NOT_NULL(out->strand);
+    ASSERT_NOT_NULL(out->score);
+    ASSERT_NOT_NULL(out->edit_distance);
+
+    /* aligned reads: strand=1 (forward), golden scores and edit distances */
+    ASSERT_EQ_INT(out->strand[0], 1);         /* BD.ERD505_1 */
+    ASSERT_EQ_INT(out->score[0], 83);
+    ASSERT_EQ_INT(out->edit_distance[0], 5);
+
+    ASSERT_EQ_INT(out->strand[1], 1);         /* BD.NBS1076_0 */
+    ASSERT_EQ_INT(out->score[1], 132);
+    ASSERT_EQ_INT(out->edit_distance[1], 11);
+
+    ASSERT_EQ_INT(out->strand[2], 1);         /* LD.Glosor1_17 */
+    ASSERT_EQ_INT(out->score[2], 154);
+    ASSERT_EQ_INT(out->edit_distance[2], 9);
+
+    ASSERT_EQ_INT(out->strand[3], 1);         /* BD.ERD510_20 */
+    ASSERT_EQ_INT(out->score[3], 154);
+    ASSERT_EQ_INT(out->edit_distance[3], 9);
+
+    /* unaligned reads: sentinel -1 for all three */
+    ASSERT_EQ_INT(out->strand[4], -1);        /* random1 */
+    ASSERT_EQ_INT(out->score[4], -1);
+    ASSERT_EQ_INT(out->edit_distance[4], -1);
+
+    ASSERT_EQ_INT(out->strand[5], -1);        /* random2 */
+    ASSERT_EQ_INT(out->score[5], -1);
+    ASSERT_EQ_INT(out->edit_distance[5], -1);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_reverse_strand) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+
+    /* reverse-complement of AB271211 — should align on reverse strand */
+    smr_seq_t seqs[1];
+    seqs[0].id = "AB271211_rc";
+    seqs[0].sequence =
+        "CCCCAGTCACTAGCCCTGCCTTAGGCATCCCCCTCCTTGCGGTTGAGGTAATGACTTCGGG"
+        "CGTGACCAGCTTCCATGGTGTGACGGGCGGTGTGTACAAGGCCCGGGAACGAATTCACCG"
+        "CCGTATGCTGACCGGCGATTACTAGCGATTCCTCCTTCATGCAGGCGAGTTGCAGCCTGC"
+        "AATCTGAACTGAGGCCGGGTTTGCTGGGATTCGCTGGCTCTCGCAAGTTCGCTGCCCTTT"
+        "GTCCCGACCATTGTAGTACGTGTGTCGCCCAAGACGTAAGGGGCATGCTGACTTGACGTC"
+        "ATCCCCACCTTCCTCCGGTTTGTCACCGGCAGTCTCCTTAGAGTCCCCAACTTAATGCTGG"
+        "CAACTAAGAACGAGGGTTGCGCTCGTTGCGGGACTTAACCCAACATCTCACGACACGAGC"
+        "TGACGACAGCCATGCACCACCTGTGTTCGCGCTCCCGAAGGCACCCCCAGCTTTCACCAGG"
+        "GTTCGCGACATGTCAAGTCTTGGTAAGGTTCTTCGCGTTGCATCGAATTAAACCACATAC"
+        "TCCACCGCTTGTGCGGGCCCCCGTCAATTCCTTTGAGTTTCACACTTGCGTGCGTACTCC"
+        "CCAGGCGGGATACTTAACGCGTTAGCTTCGGCACGGCTCGGGTCGATACAAGCCACGCCTA"
+        "GTATCCATCGTTTACGGCTAGGACTACAGGGGTATCTAATCCCTTTCGCTCCCCTAGCTTT"
+        "CGTCCCTGAGTGTCAGATACAGCCCAGTAGCACGCTTTCGCCACCGATGTTCTTCCCAATC"
+        "TCTACGCATTTCACCGCTACACTGGGAATTCCTGCTACCCCTACTGCTCTCTAGTCTGCCA"
+        "GTTTCCACCGCCTTTAGGTCGTTAAGCAACCTGATTTGACGGCAGACTTGGCTGACCACCT"
+        "GCGGACGCTTTACGCCCAATAATTCCGGATAACGCTTGCCTCCCCCGTATTACCGCGGCTG"
+        "CTGGCACGGAGTTAGCCGAGGCTGATTCCTCAAGTACCGTCAGAACTTCTTCCTTGAGAAA"
+        "AGAGGTTTACAATCCAAAGACCTTCCTCCCTCACGCGGCGTTGCTCCGTCAGGCTTTCGCC"
+        "CATTGCGGAAAATTCCCCACTGCTGCCTCCCGTAGGAGTCTGGGCCGTGTCTCAGTCCCAG"
+        "TGTGGCTGCTCATCCTCTCAGACCAGCTACTGATCGTCGCCTTGGTAGGCTCTTACCCCAC"
+        "CAACTAGCTAATCAGACGCAAGCTCCTCTTCAGGCCAATTAGGTTTCACCTCGCGGCACAT"
+        "CGGGTATTAGCAGTCGTTTCCCACTGTTGTCCCCGTCCTGAAGTTAGATTCTTACGCGTTA"
+        "CTCACCCGTCCGCCACTAGAATCCGAAGATTCCCGTTCGACTTGCATGTGTTAGGCACGCC"
+        "GCCAGCGTTCATCCTGAGCCAGGATCAAACTCTAATCACTAGTGCGGCCGCCTGCAGGTCG"
+        "ACCATATGGGAGAGCTCCCAACGCGTTGGA";
+    seqs[0].quality = NULL;
+
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs(ctx, refs, 1, seqs, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    ASSERT_EQ_U64(out->num_aligned, 1);
+
+    ASSERT_NOT_NULL(out->strand);
+    ASSERT_NOT_NULL(out->score);
+    ASSERT_NOT_NULL(out->edit_distance);
+
+    /* reverse-complement read: strand must be 0 */
+    ASSERT_EQ_INT(out->strand[0], 0);
+    ASSERT_EQ_INT(out->score[0], 2430);
+    ASSERT_EQ_INT(out->edit_distance[0], 94);
+
+    smr_output_free(out);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_run_null_out_does_not_crash) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[]  = { SMR_DATA_DIR "/test_ref.fasta" };
+    const char *reads[] = { SMR_DATA_DIR "/test_read.fasta" };
+    smr_stats_t stats;
+    int rc = smr_run(ctx, refs, 1, reads, 1, NULL, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_EQ_U64(stats.total_aligned, 1);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -1156,4 +1313,9 @@ TEST_MAIN_BEGIN()
     /* Phase 12: ref_name output */
     RUN_TEST(test_run_tiny_ref_name);
     RUN_TEST(test_run_small_ref_name);
+    /* Phase 13: strand / score / edit_distance */
+    RUN_TEST(test_run_tiny_strand_score_edit);
+    RUN_TEST(test_run_small_strand_score_edit);
+    RUN_TEST(test_run_reverse_strand);
+    RUN_TEST(test_run_null_out_does_not_crash);
 TEST_MAIN_END()

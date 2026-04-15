@@ -49,8 +49,10 @@ Quick start
        /* 4. Inspect per-read results */
        for (uint64_t i = 0; i < out->num_reads; i++) {
            if (out->aligned[i])
-               printf("%s: %.1f%% identity, e=%.2g\n",
-                      out->read_ids[i], out->identity[i], out->e_value[i]);
+               printf("%s: %.1f%% id, e=%.2g, strand=%s, AS=%d, NM=%d\n",
+                      out->read_ids[i], out->identity[i], out->e_value[i],
+                      out->strand[i] ? "+" : "-",
+                      out->score[i], out->edit_distance[i]);
        }
 
        /* 5. Clean up */
@@ -317,6 +319,9 @@ Computation
    ``ref_end``         ``int32_t*``      1-based end on reference
    ``cigar``           ``const char**``  CIGAR string, NULL if unaligned
    ``ref_name``        ``const char**``  Reference sequence ID, NULL if unaligned
+   ``strand``          ``int32_t*``      1 = forward, 0 = reverse-complement; -1 if unaligned
+   ``score``           ``int32_t*``      Smith-Waterman alignment score; -1 if unaligned
+   ``edit_distance``   ``int32_t*``      Edit distance (mismatches + gaps); -1 if unaligned
    ==================  ================  ===========================================
 
 .. c:type:: smr_stats_t

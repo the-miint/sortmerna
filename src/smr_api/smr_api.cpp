@@ -347,14 +347,21 @@ static bool populate_per_read_output(smr_output_t *o,
     o->ref_end    = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
     o->cigar      = static_cast<const char**>(calloc(n, sizeof(char*)));
     o->ref_name   = static_cast<const char**>(calloc(n, sizeof(char*)));
+    o->strand     = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->score      = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
+    o->edit_distance = static_cast<int32_t*>(calloc(n, sizeof(int32_t)));
 
     if (!o->read_ids || !o->aligned || !o->ref_index || !o->e_value ||
-        !o->identity || !o->coverage || !o->ref_start || !o->ref_end || !o->cigar || !o->ref_name)
+        !o->identity || !o->coverage || !o->ref_start || !o->ref_end || !o->cigar || !o->ref_name ||
+        !o->strand || !o->score || !o->edit_distance)
         return false;
 
-    /* defaults for all reads */
+    /* defaults for all reads (unaligned sentinel) */
     for (uint64_t i = 0; i < n; i++) {
-        o->ref_index[i] = -1;
+        o->ref_index[i]     = -1;
+        o->strand[i]        = -1;
+        o->score[i]         = -1;
+        o->edit_distance[i] = -1;
     }
 
     Refstats refstats(opts, readstats);
@@ -407,6 +414,8 @@ static bool populate_per_read_output(smr_output_t *o,
             o->ref_index[idx] = static_cast<int32_t>(align.index_num);
             o->ref_start[idx] = align.ref_begin1 + 1;
             o->ref_end[idx]   = align.ref_end1 + 1;
+            o->strand[idx]    = static_cast<int32_t>(align.strand);
+            o->score[idx]     = static_cast<int32_t>(align.score1); /* uint16_t, always fits int32_t */
 
             /* E-value: K * m * n * exp(-λ * S) */
             o->e_value[idx] = static_cast<double>(refstats.gumbel[align.index_num].second)
@@ -442,9 +451,13 @@ static bool populate_per_read_output(smr_output_t *o,
                         const auto &al = rd.alignment.alignv[0];
                         if (al.index_num == ref_idx && al.part == idx_part) {
                             if (rd.is03) rd.flip34();
+                            if (al.strand == rd.reversed)
+                                rd.revIntStr();
                             auto mgm = rd.calc_miss_gap_match(refs, al);
                             o->identity[ri] = std::get<3>(mgm) * 100.0;
                             o->coverage[ri] = std::get<4>(mgm) * 100.0;
+                            uint32_t ed = std::get<0>(mgm) + std::get<1>(mgm);
+                            o->edit_distance[ri] = ed > (uint32_t)INT32_MAX ? INT32_MAX : static_cast<int32_t>(ed);
                             o->ref_name[ri] = strdup(refs.buffer[al.ref_num].id.c_str());
                         }
                     }
@@ -806,6 +819,9 @@ void smr_output_free(smr_output_t *out) {
     free(out->coverage);
     free(out->ref_start);
     free(out->ref_end);
+    free(out->strand);
+    free(out->score);
+    free(out->edit_distance);
     free(out);
 }
 
