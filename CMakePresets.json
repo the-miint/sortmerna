@@ -54,7 +54,8 @@
                 "CPACK_BINARY_7Z": true,
                 "CPACK_BINARY_ZIP": false,
                 "CPACK_SOURCE_7Z": true,
-                "CPACK_SOURCE_ZIP": false
+                "CPACK_SOURCE_ZIP": false,
+                "WITH_TESTS": false
             }
         },
         {

@@ -93,15 +93,8 @@ jobs:
         python setup.py -n all
         echo "=== listing dist/ ==="
         ls -l ./dist
-
-    - name: test on windows
-      if: runner.os == 'Windows'
-      run: |
-        & "$env:CONDA/shell/condabin/conda-hook.ps1"
-        & "$env:programfiles/Microsoft Visual Studio/2022/Enterprise/Common7/Tools/Launch-VsDevShell.ps1" -arch amd64
-        conda activate $env:CONDA
-        pushd $env:GITHUB_WORKSPACE
-        ctest --test-dir build -C Release --output-on-failure
+        # Note: tests are POSIX-only (pthread.h, unistd.h) and disabled for
+        # Windows via CMakePresets.json (WIN_release sets WITH_TESTS=false).
     #- name: upload macOS artifacts
     #  uses: actions/upload-artifact@v4
     #  if: runner.os == 'macOS'
