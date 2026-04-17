@@ -98,11 +98,19 @@ public:
  * NOTE: dup2 is process-wide — not safe for concurrent smr_run() calls
  * from multiple threads. The macro-based log routing (thread-local) is
  * the primary isolation mechanism; this is a secondary defense against
- * direct std::cout writes that bypass the macros. */
+ * direct std::cout writes that bypass the macros.
+ *
+ * Nested instances on the same thread are no-ops: only the outermost
+ * guard installs/restores the fd redirect. This lets smr_run_seqs call
+ * smr_index_load + smr_run_seqs_with_index without double-redirecting. */
 class FdRedirectGuard {
     int saved_out_, saved_err_;
+    bool outer_;
+    static thread_local int depth_;
 public:
-    FdRedirectGuard() : saved_out_(-1), saved_err_(-1) {
+    FdRedirectGuard() : saved_out_(-1), saved_err_(-1), outer_(depth_ == 0) {
+        ++depth_;
+        if (!outer_) return;
         fflush(stdout); fflush(stderr);
         saved_out_ = dup(STDOUT_FILENO);
         saved_err_ = dup(STDERR_FILENO);
@@ -118,11 +126,14 @@ public:
         }
     }
     ~FdRedirectGuard() {
+        --depth_;
+        if (!outer_) return;
         fflush(stdout); fflush(stderr);
         if (saved_out_ >= 0) { dup2(saved_out_, STDOUT_FILENO); close(saved_out_); }
         if (saved_err_ >= 0) { dup2(saved_err_, STDERR_FILENO); close(saved_err_); }
     }
 };
+thread_local int FdRedirectGuard::depth_ = 0;
 
 /* RAII guard for thread-local log callback */
 class LogRouteGuard {
@@ -333,7 +344,9 @@ static bool populate_per_read_output(smr_output_t *o,
                                      Readfeed &readfeed,
                                      Readstats &readstats,
                                      KeyValueDatabase &kvdb,
-                                     Runopts &opts) {
+                                     Runopts &opts,
+                                     References *preloaded_refs,
+                                     Refstats *preloaded_refstats) {
     uint64_t n = o->num_reads;
     if (n == 0) return true;
 
@@ -364,8 +377,17 @@ static bool populate_per_read_output(smr_output_t *o,
         o->edit_distance[i] = -1;
     }
 
-    Refstats refstats(opts, readstats);
-    References refs;
+    /* Use preloaded Refstats/References from the handle if supplied, else
+     * construct locally (file-based smr_run path). */
+    std::unique_ptr<Refstats> local_refstats_owner;
+    Refstats *refstats_ptr = preloaded_refstats;
+    if (!refstats_ptr) {
+        local_refstats_owner.reset(new Refstats(opts, readstats));
+        refstats_ptr = local_refstats_owner.get();
+    }
+    Refstats &refstats = *refstats_ptr;
+    References local_refs;
+    References &refs = preloaded_refs ? *preloaded_refs : local_refs;
     unsigned num_parts = readfeed.num_splits > 0 ? readfeed.num_splits : 1;
     unsigned num_sense = readfeed.num_sense;
 
@@ -399,7 +421,11 @@ static bool populate_per_read_output(smr_output_t *o,
         }
     };
 
-    /* Pass 1: collect read IDs and basic alignment info from kvdb (no refs needed) */
+    /* Pass 1: collect read IDs and basic alignment info from kvdb (no refs
+     * needed). Retain the Read objects for Pass 2 reuse so Pass 2 doesn't
+     * re-issue kvdb.get() for the same keys. */
+    std::vector<Read> reads_cache;
+    reads_cache.reserve(n);
     uint64_t aligned_count = 0;
     for_each_read([&](uint64_t idx, Read &read) {
         read.init(opts);
@@ -417,14 +443,33 @@ static bool populate_per_read_output(smr_output_t *o,
             o->strand[idx]    = static_cast<int32_t>(align.strand);
             o->score[idx]     = static_cast<int32_t>(align.score1); /* uint16_t, always fits int32_t */
 
-            /* E-value: K * m * n * exp(-λ * S) */
-            o->e_value[idx] = static_cast<double>(refstats.gumbel[align.index_num].second)
-                * refstats.full_ref[align.index_num]
-                * refstats.full_read[align.index_num]
-                * std::exp(-refstats.gumbel[align.index_num].first * align.score1);
-
             /* CIGAR string */
             uint32_t readlen = static_cast<uint32_t>(read.sequence.size());
+
+            /* E-value: textbook per-query Karlin-Altschul form,
+             *     E = K * m * n * exp(-λ * S)
+             * where n is THIS read's length and m is the uncorrected DB size.
+             * Both inputs must be batch-invariant, hence full_ref_raw (from
+             * the .stats file) rather than full_ref (which has an edge-effect
+             * correction m' = m - expect_L*numseq that depends on batch-level
+             * Readstats aggregates). Using the raw m biases library e-values
+             * ~1-3% lower than the edge-corrected form for SILVA-scale DBs
+             * (expect_L is ~20-40 nt, numseq*expect_L / m ~ 0.01-0.03). This
+             * is on top of the per-query vs run-aggregate n divergence below.
+             *
+             * Two distinct sources of library-vs-CLI e-value difference:
+             *   (1) n: per-read length (library) vs summed query space (CLI).
+             *       Library e-values smaller by ~factor of batch size.
+             *   (2) m: raw DB length (library) vs edge-corrected (CLI).
+             *       Library e-values smaller by ~1-3% for SILVA-scale DBs.
+             * Both are intentional — (1) is required for batch invariance,
+             * (2) for strict batch invariance of m (since expect_L depends on
+             * the batch-level full_read). Callers filtering on e-value
+             * thresholds should be aware and calibrate accordingly. */
+            o->e_value[idx] = static_cast<double>(refstats.gumbel[align.index_num].second)
+                * static_cast<double>(refstats.full_ref_raw[align.index_num])
+                * static_cast<double>(readlen)
+                * std::exp(-refstats.gumbel[align.index_num].first * align.score1);
             o->cigar[idx] = strdup(build_cigar_string(align, readlen).c_str());
 
             /* coverage from alignment coordinates (no refs needed) */
@@ -435,36 +480,49 @@ static bool populate_per_read_output(smr_output_t *o,
 
             ++aligned_count;
         }
+        reads_cache.push_back(std::move(read));
     });
     o->num_aligned = aligned_count;
 
-    /* Pass 2: compute %ID for aligned reads (requires loaded refs for sequence comparison) */
-    for (uint16_t ref_idx = 0; ref_idx < opts.indexfiles.size(); ++ref_idx) {
-        for (uint16_t idx_part = 0; idx_part < refstats.num_index_parts[ref_idx]; ++idx_part) {
-            refs.load(ref_idx, idx_part, opts, refstats);
+    /* Pass 2: compute %ID / %COV / ref_name for aligned reads (requires
+     * loaded refs for sequence comparison). Uses the Read objects retained
+     * from Pass 1 — no re-issued kvdb lookups. */
+    auto pass2_body = [&](uint64_t ri, Read &rd, uint16_t active_ref_idx, uint16_t active_part) {
+        if (o->aligned[ri] != 1) return;
+        if (rd.alignment.alignv.empty()) return;
+        const auto &al = rd.alignment.alignv[0];
+        if (al.index_num != active_ref_idx || al.part != active_part) return;
+        if (rd.is03) rd.flip34();
+        if (al.strand == rd.reversed) rd.revIntStr();
+        auto mgm = rd.calc_miss_gap_match(refs, al);
+        o->identity[ri] = std::get<3>(mgm) * 100.0;
+        o->coverage[ri] = std::get<4>(mgm) * 100.0;
+        uint32_t ed = std::get<0>(mgm) + std::get<1>(mgm);
+        o->edit_distance[ri] = ed > (uint32_t)INT32_MAX ? INT32_MAX : static_cast<int32_t>(ed);
+        o->ref_name[ri] = strdup(refs.buffer[al.ref_num].id.c_str());
+    };
 
-            for_each_read([&](uint64_t ri, Read &rd) {
-                if (o->aligned[ri] == 1) {
-                    rd.init(opts);
-                    rd.load_db(kvdb);
-                    if (!rd.alignment.alignv.empty()) {
-                        const auto &al = rd.alignment.alignv[0];
-                        if (al.index_num == ref_idx && al.part == idx_part) {
-                            if (rd.is03) rd.flip34();
-                            if (al.strand == rd.reversed)
-                                rd.revIntStr();
-                            auto mgm = rd.calc_miss_gap_match(refs, al);
-                            o->identity[ri] = std::get<3>(mgm) * 100.0;
-                            o->coverage[ri] = std::get<4>(mgm) * 100.0;
-                            uint32_t ed = std::get<0>(mgm) + std::get<1>(mgm);
-                            o->edit_distance[ri] = ed > (uint32_t)INT32_MAX ? INT32_MAX : static_cast<int32_t>(ed);
-                            o->ref_name[ri] = strdup(refs.buffer[al.ref_num].id.c_str());
-                        }
-                    }
+    if (preloaded_refs) {
+        /* Library path: refs already loaded for (refs.num, refs.part) by the
+         * handle. Iterate reads once and use them directly; no load/unload. */
+        for (uint64_t ri = 0; ri < reads_cache.size(); ++ri) {
+            pass2_body(ri, reads_cache[ri], refs.num, static_cast<uint16_t>(refs.part));
+        }
+    } else {
+        /* File-based path: load each (ref_idx, part) in turn, run the body,
+         * unload. TODO(future): the outer loop runs for every part but each
+         * Read's alignment belongs to exactly one (ref_idx, part); consider
+         * partitioning reads_cache by (al.index_num, al.part) so each read
+         * is visited exactly once. Today the filter inside pass2_body gates
+         * per-part but skipped reads still traverse the loop. */
+        for (uint16_t ref_idx = 0; ref_idx < opts.indexfiles.size(); ++ref_idx) {
+            for (uint16_t idx_part = 0; idx_part < refstats.num_index_parts[ref_idx]; ++idx_part) {
+                refs.load(ref_idx, idx_part, opts, refstats);
+                for (uint64_t ri = 0; ri < reads_cache.size(); ++ri) {
+                    pass2_body(ri, reads_cache[ri], ref_idx, idx_part);
                 }
-            });
-
-            refs.unload();
+                refs.unload();
+            }
         }
     }
 
@@ -590,7 +648,7 @@ int smr_run(smr_context_t *ctx,
 
             o->num_reads = readstats.all_reads_count;
 
-            if (!populate_per_read_output(o, readfeed, readstats, kvdb, opts)) {
+            if (!populate_per_read_output(o, readfeed, readstats, kvdb, opts, nullptr, nullptr)) {
                 smr_output_free(o);
                 set_error(ctx, SMR_ERR_ALLOC, "failed to allocate per-read output arrays");
                 return SMR_ERR_ALLOC;
@@ -615,41 +673,40 @@ int smr_run(smr_context_t *ctx,
     }
 }
 
-int smr_run_seqs(smr_context_t *ctx,
-                 const char **ref_paths, int32_t num_refs,
-                 const smr_seq_t *seqs, int32_t num_seqs,
-                 smr_output_t **out,
-                 smr_stats_t *stats) {
-    if (!ctx) return SMR_ERR_INVALID_CONFIG;
+/* --- Pre-loaded index (streaming) API --- */
 
-    if (!ref_paths || num_refs <= 0) {
-        set_error(ctx, SMR_ERR_INVALID_CONFIG, "ref_paths is NULL or num_refs <= 0");
-        return SMR_ERR_INVALID_CONFIG;
-    }
+/* Opaque handle. Owns workdir lifecycle, the cached Runopts, the loaded
+ * Index+References+Refstats for a single (ref_idx=0, part=0), and an open
+ * KeyValueDatabase. The expensive burst-trie + reference-sequence load is
+ * paid exactly once per handle in smr_index_load; smr_run_seqs_with_index
+ * only constructs per-batch Readfeed + Readstats and dispatches to
+ * align_loaded(). Multi-part indexes are not supported in this cycle. */
+struct smr_index {
+    smr_context_t *ctx;
+    std::vector<std::string> ref_path_storage;
+    std::string workdir;
+    bool workdir_is_temp;
+
+    std::unique_ptr<Runopts> opts;
+    std::unique_ptr<KeyValueDatabase> kvdb;
+    std::unique_ptr<Refstats> refstats;
+    std::unique_ptr<Index> index;
+    References references;   /* not unique_ptr — no default ctor needed */
+    bool index_loaded;       /* true once index.load() + references.load() succeeded */
+};
+
+static int validate_seqs(smr_context_t *ctx, const smr_seq_t *seqs, int32_t num_seqs,
+                         bool paired, bool *has_qual_out) {
+    *has_qual_out = false;
     if (!seqs || num_seqs <= 0) {
         set_error(ctx, SMR_ERR_INVALID_CONFIG, "seqs is NULL or num_seqs <= 0");
         return SMR_ERR_INVALID_CONFIG;
     }
-    if (ctx->config.paired && (num_seqs % 2 != 0)) {
+    if (paired && (num_seqs % 2 != 0)) {
         set_error(ctx, SMR_ERR_INVALID_CONFIG,
                   "paired mode requires even num_seqs (interleaved fwd/rev); got %d", num_seqs);
         return SMR_ERR_INVALID_CONFIG;
     }
-
-    /* validate ref file existence */
-    for (int32_t i = 0; i < num_refs; i++) {
-        if (!ref_paths[i] || !file_exists(ref_paths[i])) {
-            set_error(ctx, SMR_ERR_IO, "reference file not found: %s",
-                      ref_paths[i] ? ref_paths[i] : "(null)");
-            return SMR_ERR_IO;
-        }
-        if (file_is_empty(ref_paths[i])) {
-            set_error(ctx, SMR_ERR_IO, "reference file is empty: %s", ref_paths[i]);
-            return SMR_ERR_IO;
-        }
-    }
-
-    /* validate sequences (all checks before acquiring the mutex) */
     bool has_qual = (seqs[0].quality != nullptr);
     for (int32_t i = 0; i < num_seqs; i++) {
         if (!seqs[i].id || !seqs[i].sequence) {
@@ -672,55 +729,190 @@ int smr_run_seqs(smr_context_t *ctx,
             return SMR_ERR_INVALID_CONFIG;
         }
     }
+    *has_qual_out = has_qual;
+    return SMR_OK;
+}
 
-    std::lock_guard<std::mutex> run_lock(g_run_mutex);
-    auto wall_start = std::chrono::high_resolution_clock::now();
+smr_index_t *smr_index_load(smr_context_t *ctx,
+                            const char **ref_paths, int32_t num_refs) {
+    if (!ctx) return nullptr;
 
-    std::string workdir;
-    bool workdir_is_temp = (ctx->config.workdir == nullptr);
-    if (!workdir_is_temp) {
-        workdir = ctx->config.workdir;
+    if (!ref_paths || num_refs <= 0) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "ref_paths is NULL or num_refs <= 0");
+        return nullptr;
+    }
+
+    for (int32_t i = 0; i < num_refs; i++) {
+        if (!ref_paths[i] || !file_exists(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file not found: %s",
+                      ref_paths[i] ? ref_paths[i] : "(null)");
+            return nullptr;
+        }
+        if (file_is_empty(ref_paths[i])) {
+            set_error(ctx, SMR_ERR_IO, "reference file is empty: %s", ref_paths[i]);
+            return nullptr;
+        }
+    }
+
+    auto *idx = new (std::nothrow) smr_index_t;
+    if (!idx) {
+        set_error(ctx, SMR_ERR_ALLOC, "failed to allocate smr_index_t");
+        return nullptr;
+    }
+    idx->ctx = ctx;
+    idx->index_loaded = false;
+    idx->ref_path_storage.reserve(num_refs);
+    for (int32_t i = 0; i < num_refs; i++) {
+        idx->ref_path_storage.emplace_back(ref_paths[i]);
+    }
+
+    idx->workdir_is_temp = (ctx->config.workdir == nullptr);
+    if (!idx->workdir_is_temp) {
+        idx->workdir = ctx->config.workdir;
     } else {
         int run_id = g_run_counter.fetch_add(1);
         std::ostringstream ss;
         ss << "/tmp/smr_api_" << getpid() << "_" << run_id;
-        workdir = ss.str();
+        idx->workdir = ss.str();
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(idx->workdir, ec);
+    if (ec) {
+        set_error(ctx, SMR_ERR_IO, "failed to create workdir %s: %s",
+                  idx->workdir.c_str(), ec.message().c_str());
+        smr_index_free(idx);
+        return nullptr;
     }
 
-    WorkdirGuard wdguard(workdir, workdir_is_temp);
     LogRouteGuard loguard(ctx->config.log_callback, ctx->config.log_user_data);
-    FdRedirectGuard fdguard;
 
     try {
-        /* Runopts requires --reads pointing to a valid file for option parsing
-         * and format detection. Write a minimal placeholder matching the actual
-         * format. The real reads are served from the MEMORY-mode Readfeed below;
-         * this file is only touched by Runopts validation and is cleaned up
-         * by WorkdirGuard. */
-        std::filesystem::create_directories(workdir);
-        std::string placeholder_ext = has_qual ? ".fq" : ".fa";
-        std::string placeholder_reads = workdir + "/placeholder_reads" + placeholder_ext;
+        /* Write a FASTA placeholder_reads file for Runopts. The real reads
+         * come via in-memory Readfeed at each with_index call; this file is
+         * never read for sequence data. See header "Input format" note. */
+        std::string placeholder_reads = idx->workdir + "/placeholder_reads.fa";
         {
             std::ofstream ofs(placeholder_reads);
-            if (has_qual)
-                ofs << "@placeholder\nA\n+\nI\n";
-            else
-                ofs << ">placeholder\nA\n";
+            ofs << ">placeholder\nA\n";
         }
         const char *dummy_read_paths[] = { placeholder_reads.c_str() };
 
-        auto args = build_argv(ctx->config, ref_paths, num_refs, dummy_read_paths, 1, workdir);
+        std::vector<const char *> ref_ptrs;
+        ref_ptrs.reserve(idx->ref_path_storage.size());
+        for (auto &s : idx->ref_path_storage) ref_ptrs.push_back(s.c_str());
+
+        auto args = build_argv(ctx->config, ref_ptrs.data(), (int32_t)ref_ptrs.size(),
+                               dummy_read_paths, 1, idx->workdir);
         std::vector<char*> argv_ptrs;
         for (auto &a : args) argv_ptrs.push_back(const_cast<char*>(a.c_str()));
         argv_ptrs.push_back(nullptr);
 
-        bool dryrun = false;
-        Runopts opts(static_cast<int>(argv_ptrs.size() - 1), argv_ptrs.data(), dryrun);
+        /* Process-wide-stateful ops (Runopts parse + dup2 suppression) are
+         * serialized; heavy loads below run concurrently across handles. */
+        {
+            std::lock_guard<std::mutex> run_lock(g_run_mutex);
+            FdRedirectGuard fdguard;
 
-        ctx_log(ctx, SMR_LOG_INFO, "pipeline starting (in-memory): %d refs, %d seqs", num_refs, num_seqs);
+            bool dryrun = false;
+            idx->opts.reset(new Runopts(static_cast<int>(argv_ptrs.size() - 1),
+                                        argv_ptrs.data(), dryrun));
+            idx->opts->is_library_mode = true;
 
-        /* build in-memory vectors from smr_seq_t array
-         * (quality consistency already validated pre-lock) */
+            idx->index.reset(new Index(*idx->opts));
+            idx->kvdb.reset(new KeyValueDatabase(idx->opts->kvdbdir.string()));
+
+            /* Refstats construction logs "Index Statistics calculation" to
+             * stdout when no log_callback is set; keep it under fd-guard. */
+            Readstats dummy_rs(0, 0, 0, 0, *idx->kvdb, *idx->opts);
+            idx->refstats.reset(new Refstats(*idx->opts, dummy_rs));
+        }
+        /* Mutex + fdguard released. index.load/references.load don't touch
+         * stdout directly — their INFO output routes through the thread-local
+         * LogRouteGuard when a log_callback is set; otherwise stdout-visible
+         * (matches the pre-cycle-5 behavior of silent-only-with-callback). */
+
+        /* MVP: require single-part, single-ref index. Multi-part support
+         * means either loading all parts into memory (large) or re-loading
+         * per batch (defeats the point of the handle). Reject for now. */
+        for (size_t ri = 0; ri < idx->opts->indexfiles.size(); ri++) {
+            if (idx->refstats->num_index_parts[ri] > 1) {
+                set_error(ctx, SMR_ERR_NOT_IMPLEMENTED,
+                          "multi-part index (%u parts for ref %zu) not yet supported by smr_index_load",
+                          idx->refstats->num_index_parts[ri], ri);
+                smr_index_free(idx);
+                return nullptr;
+            }
+        }
+
+        /* Load ref 0 / part 0 into memory — expensive, done once per handle. */
+        ctx_log(ctx, SMR_LOG_INFO, "smr_index_load: loading references and index into memory");
+        idx->index->load(0, 0, idx->opts->indexfiles, *idx->refstats);
+        idx->references.load(0, 0, *idx->opts, *idx->refstats);
+        idx->index_loaded = true;
+        ctx_log(ctx, SMR_LOG_INFO, "smr_index_load: handle ready (%zu ref(s), single-part)",
+                idx->opts->indexfiles.size());
+
+    } catch (const smr_exit_requested &) {
+        set_error(ctx, SMR_ERR_INVALID_CONFIG, "unexpected --help/--version in library context");
+        smr_index_free(idx);
+        return nullptr;
+    } catch (const std::exception &e) {
+        set_error(ctx, SMR_ERR_INDEX, "%s", e.what());
+        smr_index_free(idx);
+        return nullptr;
+    } catch (...) {
+        set_error(ctx, SMR_ERR_INDEX, "unknown exception in smr_index_load");
+        smr_index_free(idx);
+        return nullptr;
+    }
+
+    set_error(ctx, SMR_OK, "");
+    return idx;
+}
+
+int smr_run_seqs_with_index(smr_index_t *idx,
+                            const smr_seq_t *seqs, int32_t num_seqs,
+                            smr_output_t **out,
+                            smr_stats_t *stats) {
+    if (!idx) return SMR_ERR_INVALID_CONFIG;
+    smr_context_t *ctx = idx->ctx;
+    if (!idx->index_loaded) {
+        set_error(ctx, SMR_ERR_INDEX, "handle index not loaded");
+        return SMR_ERR_INDEX;
+    }
+
+    bool has_qual = false;
+    int vrc = validate_seqs(ctx, seqs, num_seqs, ctx->config.paired != 0, &has_qual);
+    if (vrc != SMR_OK) return vrc;
+    /* FASTA and FASTQ batches are both accepted. The placeholder_reads file
+     * at load time satisfies Runopts validation but is never read for
+     * sequence data; Readfeed MEMORY mode derives format from the presence
+     * of quality strings in the in-memory batch. */
+
+    std::lock_guard<std::mutex> run_lock(g_run_mutex);
+    auto wall_start = std::chrono::high_resolution_clock::now();
+
+    LogRouteGuard loguard(ctx->config.log_callback, ctx->config.log_user_data);
+    FdRedirectGuard fdguard;
+
+    try {
+        /* Wipe the split-reads directory so Readfeed's fresh partition files
+         * don't collide with the previous call's contents. The kvdb is NOT
+         * wiped — it's shared across calls (Readstats skips restoreFromDb in
+         * library mode, so stale entries are harmless under the read-ID
+         * uniqueness contract). */
+        std::error_code ec;
+        std::filesystem::remove_all(idx->workdir + "/readb", ec);
+        if (ec) {
+            set_error(ctx, SMR_ERR_IO, "failed to clear readb: %s", ec.message().c_str());
+            return SMR_ERR_IO;
+        }
+
+        Runopts &opts = *idx->opts;
+
+        ctx_log(ctx, SMR_LOG_INFO, "pipeline starting (in-memory, with loaded index): %d seqs",
+                num_seqs);
+
         std::vector<std::string> ids, sequences, quals;
         ids.reserve(num_seqs);
         sequences.reserve(num_seqs);
@@ -728,23 +920,20 @@ int smr_run_seqs(smr_context_t *ctx,
         for (int32_t i = 0; i < num_seqs; i++) {
             ids.emplace_back(seqs[i].id);
             sequences.emplace_back(seqs[i].sequence);
-            if (has_qual)
-                quals.emplace_back(seqs[i].quality);
+            if (has_qual) quals.emplace_back(seqs[i].quality);
         }
 
-        Index index(opts);
-        KeyValueDatabase kvdb(opts.kvdbdir.string());
-
-        /* construct Readfeed in MEMORY mode — no file I/O for reads */
         auto basedir = opts.readb_dir;
         Readfeed readfeed(std::move(ids), std::move(sequences), std::move(quals),
                           opts.num_proc_thread, basedir, opts.is_paired);
         Readstats readstats(readfeed.num_reads_tot, readfeed.length_all,
-                            readfeed.min_read_len, readfeed.max_read_len, kvdb, opts);
+                            readfeed.min_read_len, readfeed.max_read_len, *idx->kvdb, opts);
 
-        align(readfeed, readstats, index, kvdb, opts);
-        writeSummary(readstats, opts);
-        writeReports(readfeed, readstats, kvdb, opts);
+        align_loaded(readfeed, readstats, *idx->index, idx->references, *idx->refstats,
+                     *idx->kvdb, opts, 0, 0);
+
+        /* Library path: writeSummary/writeReports skipped — library callers
+         * consume smr_output_t directly from kvdb, not the report files. */
 
         ctx_log(ctx, SMR_LOG_INFO, "pipeline complete");
 
@@ -770,7 +959,8 @@ int smr_run_seqs(smr_context_t *ctx,
 
             o->num_reads = readstats.all_reads_count;
 
-            if (!populate_per_read_output(o, readfeed, readstats, kvdb, opts)) {
+            if (!populate_per_read_output(o, readfeed, readstats, *idx->kvdb, opts,
+                                          &idx->references, idx->refstats.get())) {
                 smr_output_free(o);
                 set_error(ctx, SMR_ERR_ALLOC, "failed to allocate per-read output arrays");
                 return SMR_ERR_ALLOC;
@@ -792,6 +982,40 @@ int smr_run_seqs(smr_context_t *ctx,
         set_error(ctx, SMR_ERR_ALIGN, "unknown exception in pipeline");
         return SMR_ERR_ALIGN;
     }
+}
+
+void smr_index_free(smr_index_t *idx) {
+    if (!idx) return; /* NULL is always safe -- contract */
+    if (idx->index_loaded) {
+        if (idx->index) idx->index->unload();
+        idx->references.unload();
+    }
+    /* unique_ptr destructors close kvdb and release Refstats / Runopts. */
+    idx->kvdb.reset();
+    idx->refstats.reset();
+    idx->index.reset();
+    idx->opts.reset();
+    if (idx->workdir_is_temp && !idx->workdir.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(idx->workdir, ec);
+    }
+    delete idx;
+}
+
+int smr_run_seqs(smr_context_t *ctx,
+                 const char **ref_paths, int32_t num_refs,
+                 const smr_seq_t *seqs, int32_t num_seqs,
+                 smr_output_t **out,
+                 smr_stats_t *stats) {
+    if (!ctx) return SMR_ERR_INVALID_CONFIG;
+    smr_index_t *idx = smr_index_load(ctx, ref_paths, num_refs);
+    /* Propagate the specific error code set by smr_index_load via ctx. Safe
+     * because smr_index_load's NULL return paths all call set_error(ctx, code)
+     * and no other code runs between that and here to overwrite it. */
+    if (!idx) return smr_last_error_code(ctx);
+    int rc = smr_run_seqs_with_index(idx, seqs, num_seqs, out, stats);
+    smr_index_free(idx);
+    return rc;
 }
 
 void smr_output_free(smr_output_t *out) {

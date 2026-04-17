@@ -1232,6 +1232,516 @@ TEST(test_run_null_out_does_not_crash) {
     smr_ctx_destroy(ctx);
 }
 
+/* ---- Phase 14: pre-loaded index (streaming) API ---- */
+
+TEST(test_index_load_rejects_null_ctx) {
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_index_t *idx = smr_index_load(NULL, refs, 1);
+    ASSERT_NULL(idx);
+}
+
+TEST(test_index_load_rejects_null_refs) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    smr_index_t *idx = smr_index_load(ctx, NULL, 0);
+    ASSERT_NULL(idx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_INVALID_CONFIG);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_index_load_rejects_zero_num_refs) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_index_t *idx = smr_index_load(ctx, refs, 0);
+    ASSERT_NULL(idx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_INVALID_CONFIG);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_index_load_rejects_missing_ref_file) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { "/nonexistent/ref.fasta" };
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NULL(idx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_IO);
+    smr_ctx_destroy(ctx);
+}
+
+TEST(test_index_free_is_null_safe) {
+    smr_index_free(NULL);
+    ASSERT_TRUE(1);
+}
+
+TEST(test_run_seqs_with_index_rejects_null_handle) {
+    smr_seq_t seqs[1];
+    seqs[0].id = "r"; seqs[0].sequence = "A"; seqs[0].quality = NULL;
+    int rc = smr_run_seqs_with_index(NULL, seqs, 1, NULL, NULL);
+    ASSERT_EQ_INT(rc, SMR_ERR_INVALID_CONFIG);
+}
+
+TEST(test_index_load_and_free_roundtrip) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NOT_NULL(idx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_OK);
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx);
+}
+
+/* Wrapper-equivalence test: the same inputs run through smr_run_seqs and
+ * through (smr_index_load + smr_run_seqs_with_index + smr_index_free) must
+ * produce byte-identical per-read output and counter-identical stats. */
+TEST(test_run_seqs_with_index_matches_legacy_tiny) {
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_seq_t seqs[1];
+    seqs[0].id = "AB271211";
+    seqs[0].sequence =
+        "TCCAACGCGTTGGGAGCTCTCCCATATGGTCGACCTGCAGGCGGCCGCACTAGTGATTAG"
+        "AGTTTGATCCTGGCTCAGGATGAACGCTGGCGGCGTGCCTAACACATGCAAGTCGAACGG"
+        "GAATCTTCGGATTCTAGTGGCGGACGGGTGAGTAACGCGTAAGAATCTAACTTCAGGACG"
+        "GGGACAACAGTGGGAAACGACTGCTAATACCCGATGTGCCGCGAGGTGAAACCTAATTGG";
+    seqs[0].quality = NULL;
+
+    /* Legacy path */
+    smr_config_t cfg1;
+    smr_config_init(&cfg1);
+    cfg1.num_threads = 1;
+    smr_context_t *ctx1 = smr_ctx_create(&cfg1);
+    ASSERT_NOT_NULL(ctx1);
+    smr_output_t *out1 = NULL;
+    smr_stats_t stats1;
+    int rc1 = smr_run_seqs(ctx1, refs, 1, seqs, 1, &out1, &stats1);
+    ASSERT_EQ_INT(rc1, SMR_OK);
+    ASSERT_NOT_NULL(out1);
+
+    /* New handle path */
+    smr_config_t cfg2;
+    smr_config_init(&cfg2);
+    cfg2.num_threads = 1;
+    smr_context_t *ctx2 = smr_ctx_create(&cfg2);
+    ASSERT_NOT_NULL(ctx2);
+    smr_index_t *idx = smr_index_load(ctx2, refs, 1);
+    ASSERT_NOT_NULL(idx);
+    smr_output_t *out2 = NULL;
+    smr_stats_t stats2;
+    int rc2 = smr_run_seqs_with_index(idx, seqs, 1, &out2, &stats2);
+    ASSERT_EQ_INT(rc2, SMR_OK);
+    ASSERT_NOT_NULL(out2);
+
+    /* Byte-compare every output field */
+    ASSERT_EQ_U64(out1->num_reads, out2->num_reads);
+    ASSERT_EQ_U64(out1->num_aligned, out2->num_aligned);
+    for (uint64_t i = 0; i < out1->num_reads; i++) {
+        ASSERT_STR_EQ(out1->read_ids[i], out2->read_ids[i]);
+        ASSERT_EQ_INT(out1->aligned[i], out2->aligned[i]);
+        ASSERT_EQ_INT(out1->ref_index[i], out2->ref_index[i]);
+        ASSERT_EQ_INT(out1->ref_start[i], out2->ref_start[i]);
+        ASSERT_EQ_INT(out1->ref_end[i], out2->ref_end[i]);
+        ASSERT_EQ_INT(out1->strand[i], out2->strand[i]);
+        ASSERT_EQ_INT(out1->score[i], out2->score[i]);
+        ASSERT_EQ_INT(out1->edit_distance[i], out2->edit_distance[i]);
+        /* Both paths run identical code; values must be bitwise equal. */
+        ASSERT_DOUBLE_BITEQ(out1->e_value[i], out2->e_value[i]);
+        ASSERT_DOUBLE_BITEQ(out1->identity[i], out2->identity[i]);
+        ASSERT_DOUBLE_BITEQ(out1->coverage[i], out2->coverage[i]);
+        if (out1->aligned[i]) {
+            ASSERT_STR_EQ(out1->cigar[i], out2->cigar[i]);
+            ASSERT_STR_EQ(out1->ref_name[i], out2->ref_name[i]);
+        }
+    }
+    ASSERT_EQ_U64(stats1.total_reads, stats2.total_reads);
+    ASSERT_EQ_U64(stats1.total_aligned, stats2.total_aligned);
+    ASSERT_EQ_U64(stats1.total_id_cov_pass, stats2.total_id_cov_pass);
+    ASSERT_EQ_U64(stats1.total_denovo, stats2.total_denovo);
+    ASSERT_EQ_INT((int)stats1.min_read_len, (int)stats2.min_read_len);
+    ASSERT_EQ_INT((int)stats1.max_read_len, (int)stats2.max_read_len);
+
+    smr_output_free(out1);
+    smr_output_free(out2);
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx1);
+    smr_ctx_destroy(ctx2);
+}
+
+/* Fixture: 6 reads from set7. First 4 align, last 2 ("random1"/"random2") do not. */
+static const smr_seq_t SET7_SEQS[6] = {
+    { "BD.ERD505_1",
+      "AACGTAGGTGGCAAGCGTTGTCCGGAATTACTGGGTGTAAAGGGAGCGCAGGCGGAAAAGCAAGTTGGACGTGAAATCTATGGGCTCAACCCATAGCGTG",
+      NULL },
+    { "BD.NBS1076_0",
+      "TACGGAGGGTGCAAGCGTTAATCCGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCACGGGCTCAACCTGG",
+      NULL },
+    { "LD.Glosor1_17",
+      "TACGGAGGGTGCAAGCGTTAATCGGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCCCGGGCTCAACCTGGGAACTG",
+      NULL },
+    { "BD.ERD510_20",
+      "TACGGAGGGTGCAAGCGTTAATCGGAATTACTGGGCGTAAAGCGCACGCAGGCGGTCTGTCAAGTCGGATGTGAAATCCCCGGGCTCAACCTGGGAACTG",
+      NULL },
+    { "random1",
+      "GTGTCACGTCAAATTCTCGGCTGGCTCCCTTAGTCGCATTAGTCCATGCAGAACGCGCACAGTTGAGGCAAGGCCGTAAAACACGTATGGATAAGGGGAT",
+      NULL },
+    { "random2",
+      "TCACTTACGATATGCCTGTCTGGGGCCATCTCTAACGTCGGCGATGTTCCCATTCAGCGGCAAGCTCTCGTTCTGCATGGGTCAACTCCCTCACGAAGAA",
+      NULL },
+};
+
+/* Cycle 3: three sequential batches on ONE handle must produce byte-identical
+ * per-read output to three independent smr_run_seqs calls (fresh handle each
+ * time). Catches state leakage across calls — Readstats restoration from
+ * kvdb, stale kvdb entries, etc.
+ *
+ * Batch layout is interleaved (not 2+2+2 aligned-then-unaligned) so that each
+ * batch mixes aligned and unaligned reads; a state contamination that
+ * affected only the aligned-count would otherwise slip through. */
+TEST(test_run_seqs_with_index_repeated_matches_independent) {
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+
+    /* Indices into SET7_SEQS. reads[0..3] align, [4..5] do not; interleave so
+     * every batch sees a mix. */
+    const int B0[] = {0, 4}; /* aligned + unaligned */
+    const int B1[] = {1, 5}; /* aligned + unaligned */
+    const int B2[] = {2, 3}; /* aligned + aligned */
+    const int *batches[3] = { B0, B1, B2 };
+
+    smr_seq_t bufs[3][2];
+    for (int b = 0; b < 3; b++) {
+        bufs[b][0] = SET7_SEQS[batches[b][0]];
+        bufs[b][1] = SET7_SEQS[batches[b][1]];
+    }
+
+    /* Path A: three independent smr_run_seqs calls (the control). */
+    smr_output_t *ctl[3] = { NULL, NULL, NULL };
+    smr_stats_t ctl_stats[3];
+    for (int b = 0; b < 3; b++) {
+        smr_config_t cfg;
+        smr_config_init(&cfg);
+        cfg.num_threads = 1;
+        smr_context_t *ctx = smr_ctx_create(&cfg);
+        ASSERT_NOT_NULL(ctx);
+        int rc = smr_run_seqs(ctx, refs, 1, bufs[b], 2, &ctl[b], &ctl_stats[b]);
+        ASSERT_EQ_INT(rc, SMR_OK);
+        ASSERT_NOT_NULL(ctl[b]);
+        smr_ctx_destroy(ctx);
+    }
+
+    /* Path B: three sequential with_index calls on one handle. */
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NOT_NULL(idx);
+
+    smr_output_t *exp[3] = { NULL, NULL, NULL };
+    smr_stats_t exp_stats[3];
+    for (int b = 0; b < 3; b++) {
+        int rc = smr_run_seqs_with_index(idx, bufs[b], 2, &exp[b], &exp_stats[b]);
+        ASSERT_EQ_INT(rc, SMR_OK);
+        ASSERT_NOT_NULL(exp[b]);
+    }
+
+    /* Byte-compare every batch. */
+    for (int b = 0; b < 3; b++) {
+        ASSERT_EQ_U64(ctl[b]->num_reads, exp[b]->num_reads);
+        ASSERT_EQ_U64(ctl[b]->num_aligned, exp[b]->num_aligned);
+        for (uint64_t i = 0; i < ctl[b]->num_reads; i++) {
+            ASSERT_STR_EQ(ctl[b]->read_ids[i], exp[b]->read_ids[i]);
+            ASSERT_EQ_INT(ctl[b]->aligned[i], exp[b]->aligned[i]);
+            ASSERT_EQ_INT(ctl[b]->ref_index[i], exp[b]->ref_index[i]);
+            ASSERT_EQ_INT(ctl[b]->ref_start[i], exp[b]->ref_start[i]);
+            ASSERT_EQ_INT(ctl[b]->ref_end[i], exp[b]->ref_end[i]);
+            ASSERT_EQ_INT(ctl[b]->strand[i], exp[b]->strand[i]);
+            ASSERT_EQ_INT(ctl[b]->score[i], exp[b]->score[i]);
+            ASSERT_EQ_INT(ctl[b]->edit_distance[i], exp[b]->edit_distance[i]);
+            ASSERT_DOUBLE_BITEQ(ctl[b]->e_value[i], exp[b]->e_value[i]);
+            ASSERT_DOUBLE_BITEQ(ctl[b]->identity[i], exp[b]->identity[i]);
+            ASSERT_DOUBLE_BITEQ(ctl[b]->coverage[i], exp[b]->coverage[i]);
+            if (ctl[b]->aligned[i]) {
+                ASSERT_STR_EQ(ctl[b]->cigar[i], exp[b]->cigar[i]);
+                ASSERT_STR_EQ(ctl[b]->ref_name[i], exp[b]->ref_name[i]);
+            }
+        }
+        ASSERT_EQ_U64(ctl_stats[b].total_reads, exp_stats[b].total_reads);
+        ASSERT_EQ_U64(ctl_stats[b].total_aligned, exp_stats[b].total_aligned);
+        ASSERT_EQ_U64(ctl_stats[b].total_id_cov_pass, exp_stats[b].total_id_cov_pass);
+    }
+
+    /* Aggregate-sum cross-check: summed over batches must match what a
+     * monolithic 6-read run would produce. Catches symmetric count leakage
+     * between batches that per-batch equality would miss. */
+    uint64_t sum_reads = 0, sum_aligned = 0;
+    for (int b = 0; b < 3; b++) {
+        sum_reads += exp_stats[b].total_reads;
+        sum_aligned += exp_stats[b].total_aligned;
+    }
+    ASSERT_EQ_U64(sum_reads, 6);
+    ASSERT_EQ_U64(sum_aligned, 4); /* reads 0..3 align, 4..5 don't */
+
+    for (int b = 0; b < 3; b++) {
+        smr_output_free(ctl[b]);
+        smr_output_free(exp[b]);
+    }
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx);
+}
+
+/* Cycle 4: batch-splitting invariance. Running 6 reads as one batch of 6 vs
+ * three batches of 2 on the same handle must produce per-read output that is
+ * byte-identical, and summed stats that match the monolithic run. */
+TEST(test_batch_split_invariance) {
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+
+    /* Monolithic 1x6 run. */
+    smr_config_t cfg_m;
+    smr_config_init(&cfg_m);
+    cfg_m.num_threads = 1;
+    smr_context_t *ctx_m = smr_ctx_create(&cfg_m);
+    ASSERT_NOT_NULL(ctx_m);
+    smr_index_t *idx_m = smr_index_load(ctx_m, refs, 1);
+    ASSERT_NOT_NULL(idx_m);
+    smr_output_t *mono = NULL;
+    smr_stats_t mono_stats;
+    int rc = smr_run_seqs_with_index(idx_m, SET7_SEQS, 6, &mono, &mono_stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(mono);
+    ASSERT_EQ_U64(mono->num_reads, 6);
+
+    /* Split 3x2 run on a separate handle (interleaved to mix aligned+unaligned). */
+    const int B0[] = {0, 4};
+    const int B1[] = {1, 5};
+    const int B2[] = {2, 3};
+    const int *batches[3] = { B0, B1, B2 };
+    smr_seq_t bufs[3][2];
+    for (int b = 0; b < 3; b++) {
+        bufs[b][0] = SET7_SEQS[batches[b][0]];
+        bufs[b][1] = SET7_SEQS[batches[b][1]];
+    }
+
+    smr_config_t cfg_s;
+    smr_config_init(&cfg_s);
+    cfg_s.num_threads = 1;
+    smr_context_t *ctx_s = smr_ctx_create(&cfg_s);
+    ASSERT_NOT_NULL(ctx_s);
+    smr_index_t *idx_s = smr_index_load(ctx_s, refs, 1);
+    ASSERT_NOT_NULL(idx_s);
+
+    smr_output_t *splits[3] = { NULL, NULL, NULL };
+    smr_stats_t split_stats[3];
+    for (int b = 0; b < 3; b++) {
+        rc = smr_run_seqs_with_index(idx_s, bufs[b], 2, &splits[b], &split_stats[b]);
+        ASSERT_EQ_INT(rc, SMR_OK);
+        ASSERT_NOT_NULL(splits[b]);
+    }
+
+    /* Build a concatenated view keyed by read_id, matching mono's input order. */
+    for (uint64_t mi = 0; mi < mono->num_reads; mi++) {
+        /* find the same read_id in the split output */
+        const char *id = mono->read_ids[mi];
+        int found = 0;
+        for (int b = 0; b < 3 && !found; b++) {
+            for (uint64_t i = 0; i < splits[b]->num_reads; i++) {
+                if (strcmp(splits[b]->read_ids[i], id) == 0) {
+                    ASSERT_EQ_INT(mono->aligned[mi], splits[b]->aligned[i]);
+                    ASSERT_EQ_INT(mono->ref_index[mi], splits[b]->ref_index[i]);
+                    ASSERT_EQ_INT(mono->ref_start[mi], splits[b]->ref_start[i]);
+                    ASSERT_EQ_INT(mono->ref_end[mi], splits[b]->ref_end[i]);
+                    ASSERT_EQ_INT(mono->strand[mi], splits[b]->strand[i]);
+                    ASSERT_EQ_INT(mono->score[mi], splits[b]->score[i]);
+                    ASSERT_EQ_INT(mono->edit_distance[mi], splits[b]->edit_distance[i]);
+                    ASSERT_DOUBLE_BITEQ(mono->e_value[mi], splits[b]->e_value[i]);
+                    ASSERT_DOUBLE_BITEQ(mono->identity[mi], splits[b]->identity[i]);
+                    ASSERT_DOUBLE_BITEQ(mono->coverage[mi], splits[b]->coverage[i]);
+                    if (mono->aligned[mi]) {
+                        ASSERT_STR_EQ(mono->cigar[mi], splits[b]->cigar[i]);
+                        ASSERT_STR_EQ(mono->ref_name[mi], splits[b]->ref_name[i]);
+                    }
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        ASSERT_TRUE(found);
+    }
+
+    /* Aggregates match. */
+    uint64_t sum_reads = 0, sum_aligned = 0;
+    for (int b = 0; b < 3; b++) {
+        sum_reads += split_stats[b].total_reads;
+        sum_aligned += split_stats[b].total_aligned;
+    }
+    ASSERT_EQ_U64(sum_reads, mono_stats.total_reads);
+    ASSERT_EQ_U64(sum_aligned, mono_stats.total_aligned);
+
+    smr_output_free(mono);
+    for (int b = 0; b < 3; b++) smr_output_free(splits[b]);
+    smr_index_free(idx_m);
+    smr_index_free(idx_s);
+    smr_ctx_destroy(ctx_m);
+    smr_ctx_destroy(ctx_s);
+}
+
+/* Log callback that counts occurrences of a given substring in emitted msgs. */
+struct substr_counter {
+    const char *needle;
+    int count;
+};
+static void substr_count_cb(int level, const char *msg, void *user_data) {
+    (void)level;
+    struct substr_counter *sc = (struct substr_counter *)user_data;
+    if (sc && msg && sc->needle && strstr(msg, sc->needle)) sc->count++;
+}
+
+/* Cycle 6: empty reference file must produce SMR_ERR_IO with a descriptive
+ * last_error, not a crash or a successfully-loaded empty handle. */
+TEST(test_index_load_empty_ref_returns_null) {
+    char empty_path[] = "/tmp/smr_empty_ref_XXXXXX";
+    int fd = mkstemp(empty_path);
+    ASSERT_TRUE(fd >= 0);
+    close(fd); /* leave the file empty (zero bytes) */
+
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { empty_path };
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NULL(idx);
+    ASSERT_EQ_INT(smr_last_error_code(ctx), SMR_ERR_IO);
+    const char *msg = smr_last_error(ctx);
+    ASSERT_NOT_NULL(msg);
+    ASSERT_TRUE(strstr(msg, "empty") != NULL);
+
+    unlink(empty_path);
+    smr_ctx_destroy(ctx);
+}
+
+/* Cycle 6: two threads alternating smr_run_seqs_with_index on the same
+ * handle must be serialized by g_run_mutex and each produce correct output. */
+struct handle_thread_arg {
+    smr_index_t *idx;
+    const smr_seq_t *seqs;
+    int num_seqs;
+    int rc;
+    uint64_t num_aligned;
+};
+static void *handle_concurrent_worker(void *arg) {
+    struct handle_thread_arg *a = (struct handle_thread_arg *)arg;
+    for (int i = 0; i < 5; i++) {
+        smr_output_t *out = NULL;
+        smr_stats_t stats;
+        a->rc = smr_run_seqs_with_index(a->idx, a->seqs, a->num_seqs, &out, &stats);
+        if (a->rc != SMR_OK) { if (out) smr_output_free(out); return NULL; }
+        a->num_aligned += stats.total_aligned;
+        smr_output_free(out);
+    }
+    return NULL;
+}
+TEST(test_concurrent_batches_on_shared_handle) {
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NOT_NULL(idx);
+
+    struct handle_thread_arg a1 = { idx, &SET7_SEQS[0], 2, 0, 0 };
+    struct handle_thread_arg a2 = { idx, &SET7_SEQS[2], 2, 0, 0 };
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, handle_concurrent_worker, &a1);
+    pthread_create(&t2, NULL, handle_concurrent_worker, &a2);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    ASSERT_EQ_INT(a1.rc, SMR_OK);
+    ASSERT_EQ_INT(a2.rc, SMR_OK);
+    /* Each worker ran 5 batches; reads 0,1 both align and reads 2,3 both
+     * align; so each worker should report 5 * 2 = 10 alignments total. */
+    ASSERT_EQ_U64(a1.num_aligned, 10);
+    ASSERT_EQ_U64(a2.num_aligned, 10);
+
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx);
+}
+
+/* Regression: smr_run_seqs_with_index accepts FASTQ batches (non-NULL
+ * quality strings). Earlier cycle-5 drafts rejected them because the
+ * placeholder_reads file was pre-written as .fa; the Readfeed MEMORY-mode
+ * constructor derives format from the in-memory quals vector, so the
+ * placeholder's extension doesn't affect correctness. */
+TEST(test_run_seqs_with_index_accepts_fastq) {
+    const char *refs[] = { SMR_DATA_DIR "/test_ref.fasta" };
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NOT_NULL(idx);
+    smr_seq_t seqs[1];
+    seqs[0].id = "r1";
+    seqs[0].sequence = "ACGT";
+    seqs[0].quality  = "IIII"; /* non-NULL → FASTQ */
+    smr_output_t *out = NULL;
+    smr_stats_t stats;
+    int rc = smr_run_seqs_with_index(idx, seqs, 1, &out, &stats);
+    ASSERT_EQ_INT(rc, SMR_OK);
+    ASSERT_NOT_NULL(out);
+    ASSERT_EQ_U64(out->num_reads, 1);
+    smr_output_free(out);
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx);
+}
+
+/* Cycle 5: Index + References load exactly once (at smr_index_load time).
+ * Subsequent smr_run_seqs_with_index calls on the same handle must NOT
+ * re-emit the "Loading references" or "Loading index:" log lines — that's
+ * the performance payoff the handle exists to deliver. */
+TEST(test_repeated_calls_do_not_reload_refs) {
+    const char *refs[] = { SMR_DATA_DIR "/silva-arc-16s-database-id95.fasta" };
+
+    struct substr_counter sc = { "loading references and index into memory", 0 };
+    smr_config_t cfg;
+    smr_config_init(&cfg);
+    cfg.num_threads = 1;
+    cfg.log_callback = substr_count_cb;
+    cfg.log_user_data = &sc;
+    smr_context_t *ctx = smr_ctx_create(&cfg);
+    ASSERT_NOT_NULL(ctx);
+
+    /* Load: should emit "Loading references" (at least once per index-part). */
+    smr_index_t *idx = smr_index_load(ctx, refs, 1);
+    ASSERT_NOT_NULL(idx);
+    int load_count = sc.count;
+    ASSERT_TRUE(load_count >= 1);
+
+    /* Run 3 batches. The counter must NOT increase — refs stay loaded. */
+    for (int b = 0; b < 3; b++) {
+        smr_output_t *out = NULL;
+        smr_stats_t stats;
+        int rc = smr_run_seqs_with_index(idx, &SET7_SEQS[b * 2], 2, &out, &stats);
+        ASSERT_EQ_INT(rc, SMR_OK);
+        smr_output_free(out);
+    }
+    ASSERT_EQ_INT(sc.count, load_count);
+
+    smr_index_free(idx);
+    smr_ctx_destroy(ctx);
+}
+
 TEST_MAIN_BEGIN()
     /* Phase 0 */
     RUN_TEST(test_config_init_sets_struct_size);
@@ -1318,4 +1828,19 @@ TEST_MAIN_BEGIN()
     RUN_TEST(test_run_small_strand_score_edit);
     RUN_TEST(test_run_reverse_strand);
     RUN_TEST(test_run_null_out_does_not_crash);
+    /* Phase 14: pre-loaded index (streaming) API */
+    RUN_TEST(test_index_load_rejects_null_ctx);
+    RUN_TEST(test_index_load_rejects_null_refs);
+    RUN_TEST(test_index_load_rejects_zero_num_refs);
+    RUN_TEST(test_index_load_rejects_missing_ref_file);
+    RUN_TEST(test_index_free_is_null_safe);
+    RUN_TEST(test_run_seqs_with_index_rejects_null_handle);
+    RUN_TEST(test_index_load_and_free_roundtrip);
+    RUN_TEST(test_run_seqs_with_index_matches_legacy_tiny);
+    RUN_TEST(test_run_seqs_with_index_repeated_matches_independent);
+    RUN_TEST(test_batch_split_invariance);
+    RUN_TEST(test_repeated_calls_do_not_reload_refs);
+    RUN_TEST(test_run_seqs_with_index_accepts_fastq);
+    RUN_TEST(test_index_load_empty_ref_returns_null);
+    RUN_TEST(test_concurrent_batches_on_shared_handle);
 TEST_MAIN_END()

@@ -145,6 +145,13 @@ Readfeed::Readfeed(FEED_TYPE type, std::vector<std::string>& readfiles, const un
  *   Creates num_parts * 2 splits (even=fwd, odd=rev).
  *   Pair j → fwd to split (j % num_parts)*2, rev to split (j % num_parts)*2+1.
  *   Thread i reads from splits i*2 (fwd) and i*2+1 (rev) via idx^=1.
+ *
+ * CONTRACT (relied on by smr_api.cpp library mode): each constructed Read
+ * gets a numeric Read::id assigned monotonically, restarting at 0 per
+ * Readfeed instance. The library's kvdb-backed per-read output cache keys
+ * on this id. If a future change reassigns ids differently (e.g., a hash
+ * of the header), the library's "always put + skip restore" strategy in
+ * processor.cpp:align2 will need a corresponding namespace change.
  */
 Readfeed::Readfeed(std::vector<std::string> ids, std::vector<std::string> seqs, std::vector<std::string> quals,
                    unsigned num_parts, std::filesystem::path& basedir, bool is_paired)

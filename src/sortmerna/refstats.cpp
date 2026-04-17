@@ -83,6 +83,7 @@ Refstats::Refstats(Runopts & opts, Readstats & readstats)
 	:
 	num_index_parts(opts.indexfiles.size(), 0),
 	full_ref(opts.indexfiles.size(), 0),
+	full_ref_raw(opts.indexfiles.size(), 0),
 	full_read(opts.indexfiles.size(), readstats.all_reads_len),
 	lnwin(opts.indexfiles.size(), 0),
 	partialwin(opts.indexfiles.size(), 0),
@@ -147,6 +148,7 @@ void Refstats::load(Runopts& opts, Readstats& readstats)
 		stats.read(reinterpret_cast<char*>(&background_freq_gv), sizeof(double) * 4);
 		// total length of sequences in the complete database
 		stats.read(reinterpret_cast<char*>(&full_ref[index_num]), sizeof(uint64_t));
+		full_ref_raw[index_num] = full_ref[index_num]; /* snapshot before edge-effect correction below */
 		// sliding window length lnwin & initialize
 		stats.read(reinterpret_cast<char*>(&lnwin[index_num]), sizeof(uint32_t));
 		// total number of reference sequences in one complete reference database
@@ -242,6 +244,16 @@ void Refstats::load(Runopts& opts, Readstats& readstats)
 		  + background_freq_gv[2] * std::log2(background_freq_gv[2])
 		  + background_freq_gv[3] * std::log2(background_freq_gv[3]));
 
+		/* Skip the edge-effect correction and minimal_score computation when
+		 * no reads are in scope (library-mode dummy Readstats, all_reads_len==0).
+		 * Without this guard, log(K*m*0) = -inf, and static_cast<uint64_t>(-inf/H)
+		 * is undefined behavior. Library mode zeroes minimal_score below anyway. */
+		if (readstats.all_reads_count == 0 || readstats.all_reads_len == 0) {
+			minimal_score[index_num] = 0;
+			stats.close();
+			continue;
+		}
+
 		// Length correction for Smith-Waterman alignment score
         // ln(Kmn)/H  (H - entropy)
         auto full_read_scale = opts.is_score_split ? opts.num_proc_thread : 1;
@@ -256,13 +268,21 @@ void Refstats::load(Runopts& opts, Readstats& readstats)
 
 		full_read[index_num] -= (expect_L * readstats.all_reads_count / full_read_scale);
 
-		// minimum score required to reach E-value 
+		// minimum score required to reach E-value
 		// S = ln(E/Kmn)/-λ   <--   E = K*m*n*exp(-λS)
-		minimal_score[index_num] = static_cast<uint32_t>((std::log(opts.evalue 
+		minimal_score[index_num] = static_cast<uint32_t>((std::log(opts.evalue
                                                             / ((double)(gumbel[index_num].second)
 					                                            * full_ref[index_num]
 					                                            * full_read[index_num] / full_read_scale)))
 			                                            / -(gumbel[index_num].first));
+
+		/* Library mode: disable the SW-score threshold filter. The per-index
+		 * minimal_score depends on batch-aggregate full_read and therefore is
+		 * not batch-invariant; zeroing it lets every SW hit through and leaves
+		 * e-value filtering to the caller. See smr_api.h "E-value semantics". */
+		if (opts.is_library_mode) {
+			minimal_score[index_num] = 0;
+		}
 
 		stats.close();
 	} // ~for loop indices

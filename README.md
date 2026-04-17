@@ -209,6 +209,92 @@ sortmerna -ref ~/a1/data/sortmerna/run/data/silva-bac-16s-database-id85.fasta \
 
 [Build instructions](https://sortmerna.readthedocs.io/en/latest/building.html)
 
+## C library API
+
+A reentrant C library (`libsmr_api`) exposes SortMeRNA as a library for
+embedding in other tools. Header: `include/smr_api.h`. Two entry points:
+
+- **`smr_run_seqs(ctx, refs, nrefs, seqs, nseqs, out, stats)`** — one-shot,
+  in-memory. Aligns a single batch of in-memory sequences against references
+  and returns results. Suitable for tools that run one batch per invocation.
+- **`smr_index_load` / `smr_run_seqs_with_index` / `smr_index_free`** —
+  streaming. Pays the reference + index load cost *once* at
+  `smr_index_load` time and reuses the loaded state across many
+  `smr_run_seqs_with_index` calls. Intended for tools that align many small
+  batches against the same references (e.g. DuckDB table functions,
+  per-request alignment in a server, per-FASTQ-record streaming).
+
+### Streaming example
+
+```c
+#include "smr_api.h"
+
+smr_config_t cfg;
+smr_config_init(&cfg);
+cfg.num_threads = 4;
+
+smr_context_t *ctx = smr_ctx_create(&cfg);
+const char *refs[] = { "silva-arc-16s-id95.fasta" };
+
+smr_index_t *idx = smr_index_load(ctx, refs, 1);  /* ~30s for SILVA */
+if (!idx) { /* smr_last_error(ctx) */ }
+
+for (int b = 0; b < num_batches; b++) {
+    smr_seq_t seqs[BATCH];
+    /* fill seqs[] — caller owns memory */
+    smr_output_t *out = NULL; smr_stats_t stats;
+    int rc = smr_run_seqs_with_index(idx, seqs, BATCH, &out, &stats);
+    if (rc != SMR_OK) { /* smr_last_error(ctx) */ continue; }
+    /* consume out->aligned[i], out->ref_name[i], out->e_value[i], ... */
+    smr_output_free(out);
+}
+
+smr_index_free(idx);
+smr_ctx_destroy(ctx);
+```
+
+### E-value semantics (library vs CLI)
+
+The streaming API computes each alignment's e-value using the textbook
+per-query Karlin-Altschul form `E = K · m · n · exp(-λ · S)`, where `n` is
+that specific read's length and `m` is the uncorrected reference DB length
+from the `.stats` file. **This differs from the CLI in two ways**, both
+intentional:
+
+1. **n — per-query vs run-aggregate.** The CLI uses the summed effective
+   query space across the whole run; the library uses just this one read's
+   length. Library e-values are therefore smaller (more significant-looking)
+   than CLI e-values by roughly a factor of the batch size (e.g. ~2048× for
+   a DuckDB vector batch, ~10⁸× for a 100M-read FASTQ).
+2. **m — uncorrected vs edge-corrected.** The CLI subtracts an edge-effect
+   term `expect_L · numseq` from the reference length; the library skips
+   that correction because it depends on batch-level aggregates. Library
+   e-values are additionally ~1–3% smaller for SILVA-scale DBs.
+
+Both changes are required for **batch-splitting invariance**: submitting
+the same reads as one batch or many batches against the same handle
+produces byte-identical per-read output. Callers filtering on e-value
+thresholds should calibrate against library output, not CLI output.
+
+The library also disables the CLI's SW-score threshold filter: every
+positive SW hit is returned, and callers drop low-significance rows
+themselves on the returned e-value.
+
+### Caller contract
+
+- **Read IDs must be unique across every batch submitted to a given
+  handle.** The library's kvdb caches per-read results keyed on an internal
+  numeric id; collisions across batches with the same id are treated as
+  overwrites (last write wins) under the assumption of caller-enforced
+  uniqueness.
+- The handle is thread-safe in the sense that concurrent
+  `smr_run_seqs_with_index` calls on the same (or different) handle are
+  serialized by a process-wide mutex. Concurrent `smr_index_load` calls on
+  *different* handles may run in parallel (the mutex is released before the
+  expensive burst-trie load).
+- Multi-part indexes are not yet supported by `smr_index_load`; the
+  function returns `SMR_ERR_NOT_IMPLEMENTED` in that case.
+
 ## User Manual
 
 See [Sortmerna Read The Docs project](https://sortmerna.readthedocs.io/en/latest/index.html).

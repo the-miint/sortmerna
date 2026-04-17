@@ -90,6 +90,14 @@ Readstats::Readstats(uint64_t all_reads_count, uint64_t all_reads_len, uint32_t 
 	}
 	dbkey = string_hash(key_str_tmp);
 
+	/* Library mode: skip kvdb-backed stats persistence. Each call has fresh
+	 * counts from the current batch; restoring from kvdb would pull stale
+	 * aggregates from a prior call on the same handle. */
+	if (opts.is_library_mode) {
+		calcSuffix(opts);
+		return;
+	}
+
 	bool is_restored = restoreFromDb(kvdb);
 
 	calcSuffix(opts);
@@ -102,7 +110,7 @@ Readstats::Readstats(uint64_t all_reads_count, uint64_t all_reads_len, uint32_t 
 		}
 		else
 		{
-			INFO("Found reads statistics in the KVDB: all_reads_count= ", all_reads_count, 
+			INFO("Found reads statistics in the KVDB: all_reads_count= ", all_reads_count,
 				" all_reads_len= ", all_reads_len);
 		}
 	}

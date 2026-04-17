@@ -85,6 +85,16 @@ static int _test_current_failed = 0;
     } \
 } while(0)
 
+/* Bitwise-equality check for doubles. Use when two code paths should produce
+ * the same value with no floating-point reassociation difference expected. */
+#define ASSERT_DOUBLE_BITEQ(a, b) do { \
+    double _a = (double)(a); double _b = (double)(b); \
+    if (memcmp(&_a, &_b, sizeof(double)) != 0) { \
+        printf(" FAIL\n    %s:%d: %.17g !bit== %.17g\n", __FILE__, __LINE__, _a, _b); \
+        _tests_failed++; _test_current_failed = 1; return; \
+    } \
+} while(0)
+
 #define ASSERT_DOUBLE_NEAR(a, b, eps) do { \
     double _a = (double)(a); double _b = (double)(b); double _e = (double)(eps); \
     double _d = (_a > _b) ? (_a - _b) : (_b - _a); \

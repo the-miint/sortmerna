@@ -41,10 +41,25 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 // forward
 class Readfeed;
+class References;
+class Refstats;
 struct Runopts;
 struct Index;
 struct Readstats;
 class KeyValueDatabase;
 
 void align(Readfeed& readfeed, Readstats& readstats, Index& index, KeyValueDatabase& kvdb, Runopts& opts);
+
+/*
+ * Variant of align() that operates on a single, already-loaded index part.
+ * Runs only the worker pool (align2) and Readstats housekeeping — does NOT
+ * call index.load/unload or refs.load/unload. Used by the pre-loaded-index
+ * library API (smr_index_load + smr_run_seqs_with_index); the CLI continues
+ * to use the classic align() which handles multi-part iteration.
+ */
+void align_loaded(Readfeed& readfeed, Readstats& readstats,
+                  Index& index, References& refs, Refstats& refstats,
+                  KeyValueDatabase& kvdb, Runopts& opts,
+                  uint16_t idx_num, uint16_t idx_part);
+
 void denovo_stats(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kvdb, Runopts& opts);

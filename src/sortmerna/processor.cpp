@@ -112,12 +112,18 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 				readstats.num_short.fetch_add(1, std::memory_order_relaxed);
 			}
 
-			if (read.isValid) {
+			if (read.isValid && !opts.is_library_mode) {
+				/* Library mode: do NOT restore per-read state from kvdb.
+				 * Read numeric IDs reset each batch; a stored is_done=true
+				 * from a prior batch would cause align2 to skip this read. */
 				read.load_db(kvdb);
 			}
 
 			if (read.isEmpty || !read.isValid || read.is_done) {
 				if (read.is_done) {
+					/* In library mode read.is_done is always false because
+					 * load_db is skipped above — this branch is effectively
+					 * dead, but the counter stays correct for CLI callers. */
 					++num_skipped;
 				}
 				continue;
@@ -148,7 +154,10 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 			if (read.isValid && !read.isEmpty)
 			{
 				if (read.is_hit) ++num_hit;
-				if (read.is_new_hit)
+				/* Library mode: always write, so prior batches' entries at
+				 * the same numeric read.id (IDs restart at 0 each batch)
+				 * don't leak into populate_per_read_output. */
+				if (read.is_new_hit || opts.is_library_mode)
 					kvdb.put(read.id, read.toBinString());
 			}
 
@@ -163,6 +172,39 @@ void align2(int id, Readfeed& readfeed, Readstats& readstats,
 		num_all, " reads. Skipped already processed: ", num_skipped, " reads",
 		" Aligned reads (passing E-value): ", num_hit, " Runtime sec: ", elapsed.count());
 } // ~align2
+
+/*
+ * Align a single batch against an already-loaded (Index, References) pair.
+ * See align_loaded declaration in processor.hpp for the full contract.
+ * Used by the library path (smr_run_seqs_with_index) to avoid re-paying the
+ * burst-trie and reference-sequence load costs on every call.
+ */
+void align_loaded(Readfeed& readfeed, Readstats& readstats,
+                  Index& index, References& refs, Refstats& refstats,
+                  KeyValueDatabase& kvdb, Runopts& opts,
+                  uint16_t idx_num, uint16_t idx_part)
+{
+	(void)idx_num; (void)idx_part; /* Index/References already carry their loaded (num, part) state */
+	int numProcThread = opts.num_proc_thread;
+	readfeed.init_reading();
+	readstats.num_short.store(0, std::memory_order_relaxed);
+
+	std::vector<std::thread> tpool;
+	tpool.reserve(numProcThread);
+	for (int i = 0; i < numProcThread; i++) {
+		tpool.emplace_back(std::thread(align2, i, std::ref(readfeed), std::ref(readstats),
+			std::ref(index), std::ref(refs), std::ref(refstats), std::ref(kvdb), std::ref(opts)));
+	}
+	for (auto& thr : tpool) thr.join();
+
+	readstats.set_is_set_aligned_id_cov();
+	/* Library mode: skip store_to_db. Readstats for in-memory library calls
+	 * is per-batch; persisting it would pollute the handle's shared kvdb
+	 * with stale aggregates visible to subsequent calls. */
+	if (!opts.is_library_mode) {
+		readstats.store_to_db(kvdb);
+	}
+}
 
 /*
 * launches processing threads. called from main

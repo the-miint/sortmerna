@@ -186,6 +186,96 @@ int smr_run_seqs(smr_context_t *ctx,
                  smr_output_t **out,
                  smr_stats_t *stats);
 
+/* --------------------------------------------------------------------
+ * Pre-loaded index (streaming) API
+ *
+ * For callers that align many query batches against the same references,
+ * smr_index_load() pays the reference / index load cost once, and
+ * smr_run_seqs_with_index() runs each batch against the cached index.
+ * smr_run_seqs() is a compatibility wrapper that calls load + run + free.
+ *
+ * Lifetime:
+ *   - The handle is owned by the caller. It holds a pointer to ctx; ctx
+ *     must outlive the handle.
+ *   - The handle is NOT reusable after smr_index_free().
+ *   - Multiple handles may coexist; each may be bound to a different ctx.
+ *
+ * Thread-safety:
+ *   - Serialized by the same process-wide mutex as smr_run(). Concurrent
+ *     calls from multiple threads on the same (or different) handles are
+ *     safe and run serially.
+ *
+ * Caller contract:
+ *   - Read IDs must be unique across every batch submitted to a given
+ *     handle. Re-using an ID in a later batch is a caller bug — results
+ *     for that read become undefined. (See README "Streaming" section.)
+ *
+ * E-value semantics:
+ *   - smr_run_seqs_with_index() computes each alignment's e-value using
+ *     the textbook per-query Karlin-Altschul form:
+ *         E = K * m * n_read * exp(-lambda * S)
+ *     where n_read is that read's own length and m is the uncorrected
+ *     database length from the reference .stats file. This differs from
+ *     the CLI (sortmerna binary) in two ways, both intentional:
+ *       1. n: per-read (library) vs summed query space (CLI).
+ *          Library e-values are smaller (more significant-looking) than
+ *          CLI e-values by roughly a factor of the batch size.
+ *       2. m: uncorrected DB length (library) vs edge-corrected (CLI).
+ *          Library e-values are smaller by a further ~1-3% for
+ *          SILVA-scale DBs.
+ *     Both changes are required for batch-splitting invariance:
+ *     submitting the same reads as one batch or many batches on the same
+ *     handle produces byte-identical per-read output. Callers filtering
+ *     on e-value thresholds should calibrate against library output, not
+ *     CLI output. See README for details.
+ *
+ *   - The library also disables the SW-score threshold filter used by
+ *     the CLI (which otherwise discards hits below a minimum SW score
+ *     derived from the target e-value). That filter's threshold is
+ *     batch-dependent, so the library zeroes it and lets callers filter
+ *     on e-value post-hoc. Net effect: every positive SW hit is returned;
+ *     callers drop low-significance rows themselves.
+ *
+ * Workdir usage:
+ *   - The library writes a small placeholder reads file (placeholder_reads.fa
+ *     or .fq) into the handle's workdir to satisfy internal option parsing.
+ *     If ctx->config.workdir is NULL, a temp directory is created and
+ *     removed by smr_index_free(). If the caller supplies a workdir, the
+ *     placeholder file persists there; the caller owns cleanup.
+ *
+ * Input format:
+ *   - Each batch's format is derived from its own smr_seq_t[] contents: a
+ *     non-NULL seqs[i].quality in any element means FASTQ, otherwise FASTA.
+ *     All sequences within a single batch must agree. Different batches on
+ *     the same handle may mix FASTA and FASTQ.
+ * -------------------------------------------------------------------- */
+
+typedef struct smr_index smr_index_t;
+
+/*
+ * Load references and build/verify the cached index.
+ * The handle captures a pointer to ctx; ctx must outlive the handle.
+ * Returns NULL on failure; call smr_last_error()/smr_last_error_code()
+ * on ctx to retrieve details.
+ */
+smr_index_t *smr_index_load(smr_context_t *ctx,
+                            const char **ref_paths, int32_t num_refs);
+
+/*
+ * Align an in-memory batch of query sequences against a pre-loaded index.
+ * Error state and log callbacks are routed through the ctx that was
+ * supplied to smr_index_load(); no separate ctx parameter is accepted
+ * to avoid the ambiguity of error routing to a mismatched context.
+ */
+int smr_run_seqs_with_index(smr_index_t *idx,
+                            const smr_seq_t *seqs, int32_t num_seqs,
+                            smr_output_t **out,
+                            smr_stats_t *stats);
+
+/* Free a handle returned by smr_index_load(). Passing NULL is safe.
+ * The handle is not reusable after this call. */
+void smr_index_free(smr_index_t *idx);
+
 void smr_output_free(smr_output_t *out);
 
 /* --------------------------------------------------------------------

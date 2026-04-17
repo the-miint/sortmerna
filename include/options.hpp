@@ -521,6 +521,11 @@ public:
 	bool is_align = false;
 	bool is_filter = false;
     bool is_score_split = false;  // if true - calculate the SW score per split rather then for all reads
+    /* Library streaming mode. Set programmatically by smr_api (no CLI option).
+     * When true, Refstats::load zeroes minimal_score[] so the SW-threshold
+     * filter at alignment.cpp is disabled — required for batch-splitting
+     * invariance, because minimal_score depends on batch-aggregate full_read. */
+    bool is_library_mode = false;
 
 	// Option derived Flags
 	bool is_as_percent = false; // derived from OPT_EDGES
