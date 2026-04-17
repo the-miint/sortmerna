@@ -1,12 +1,12 @@
 name: build multi-platform
 
 on:
-  pull_request: 
-    branches: 
-      - master
-  push: 
-  #  branches: 
-  #    - master
+  pull_request:
+    branches:
+      - main
+  push:
+  #  branches:
+  #    - main
   workflow_dispatch:
 
 concurrency: 
@@ -46,6 +46,12 @@ jobs:
         echo "=== listing dist/ ==="
         ls -l ./dist
 
+    - name: test on linux
+      if: runner.os == 'Linux'
+      run: |
+        eval "$(conda shell.bash activate)"
+        ctest --test-dir build -C Release --output-on-failure
+
     - name: build on macOS
       # latest macos is arm64 based
       if: runner.os == 'macOS'
@@ -65,6 +71,13 @@ jobs:
         echo "=== listing dist/ ==="
         ls -l ./dist
 
+    - name: test on macOS
+      if: runner.os == 'macOS'
+      run: |
+        source "${HOME}/conda/etc/profile.d/conda.sh"
+        conda activate
+        ctest --test-dir build -C Release --output-on-failure
+
     - name: build windows
       if: runner.os == 'Windows'
       env:
@@ -80,6 +93,15 @@ jobs:
         python setup.py -n all
         echo "=== listing dist/ ==="
         ls -l ./dist
+
+    - name: test on windows
+      if: runner.os == 'Windows'
+      run: |
+        & "$env:CONDA/shell/condabin/conda-hook.ps1"
+        & "$env:programfiles/Microsoft Visual Studio/2022/Enterprise/Common7/Tools/Launch-VsDevShell.ps1" -arch amd64
+        conda activate $env:CONDA
+        pushd $env:GITHUB_WORKSPACE
+        ctest --test-dir build -C Release --output-on-failure
     #- name: upload macOS artifacts
     #  uses: actions/upload-artifact@v4
     #  if: runner.os == 'macOS'
@@ -134,6 +156,6 @@ jobs:
           conda install -c conda-forge -y cmake pyyaml jinja2 requests ninja
           cd /sortmerna
           python3 setup.py -n all
-          echo "=== listing files ==="
-          ls -laR
+          echo "=== running tests ==="
+          ctest --test-dir build -C Release --output-on-failure
     

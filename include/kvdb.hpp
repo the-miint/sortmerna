@@ -40,16 +40,29 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/options.h"
+#include "rocksdb/version.h"
+
+#if ROCKSDB_MAJOR >= 11
+#include <memory>
+#endif
 
 class KeyValueDatabase {
 public:
 	KeyValueDatabase(std::string const &kvdbPath);
+#if ROCKSDB_MAJOR >= 11
+	~KeyValueDatabase() = default;
+#else
 	~KeyValueDatabase() { delete kvdb; }
+#endif
 
 	void put(std::string key, std::string val);
 	std::string get(std::string key);
 	int clear(std::string dbPath);
 private:
+#if ROCKSDB_MAJOR >= 11
+	std::unique_ptr<rocksdb::DB> kvdb;
+#else
 	rocksdb::DB* kvdb;
+#endif
 	rocksdb::Options options;
 };
