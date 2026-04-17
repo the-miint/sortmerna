@@ -23,6 +23,7 @@ jobs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, ubuntu-24.04-arm, macos-latest]
         #exclude:
@@ -35,11 +36,19 @@ jobs:
     - name: build on linux
       if: runner.os == 'Linux'
       run: |
+        set -e
         sudo apt update
         sudo apt install -y gcc-11 g++-11
         sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
         sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
         gcc --version
+        # ubuntu-latest ships miniconda preinstalled; ubuntu-24.04-arm does not.
+        if ! command -v conda >/dev/null 2>&1; then
+          wget -q "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+          bash "Miniforge3-$(uname)-$(uname -m).sh" -b -p "${HOME}/conda"
+          echo "${HOME}/conda/bin" >> "$GITHUB_PATH"
+          export PATH="${HOME}/conda/bin:$PATH"
+        fi
         eval "$(conda shell.bash activate)"
         conda install -c conda-forge -y pyyaml jinja2 requests ninja cmake
         python setup.py -n all
@@ -49,6 +58,7 @@ jobs:
     - name: test on linux
       if: runner.os == 'Linux'
       run: |
+        set -e
         eval "$(conda shell.bash activate)"
         ctest --test-dir build -C Release --output-on-failure
 
