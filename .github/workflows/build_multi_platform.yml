@@ -24,13 +24,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest, ubuntu-24.04-arm, macos-latest]
         #exclude:
         #  - os: ubuntu-latest
         #  - os: macos-latest
     steps:
     - name: git checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: build on linux
       if: runner.os == 'Linux'
@@ -121,34 +121,3 @@ jobs:
     #    path: |
     #      dist/sortmerna*win64.7z
 
-  build-linux-aarch64:
-    name: Build on Linux ARM64
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: git checkout
-      uses: actions/checkout@v4
-
-    - name: Build
-      uses: uraimo/run-on-arch-action@v2
-      with:
-        arch: aarch64
-        distro: ubuntu20.04
-        githubToken: ${{ github.token }}
-        dockerRunArgs: |
-          --volume "${PWD}:/sortmerna"
-        install: |
-          apt-get update -q -y
-          apt-get install -q -y gcc g++ wget file python3 git
-          wget https://github.com/conda-forge/miniforge/releases/download/23.11.0-0/Mambaforge-23.11.0-0-Linux-aarch64.sh
-          bash Mambaforge-23.11.0-0-Linux-aarch64.sh -b
-        run: |
-          set -x
-          export PATH=${HOME}/mambaforge/bin:$PATH
-          eval "$(conda shell.bash activate)"
-          conda install -c conda-forge -y cmake pyyaml jinja2 requests ninja
-          cd /sortmerna
-          python3 setup.py -n all
-          echo "=== running tests ==="
-          ctest --test-dir build -C Release --output-on-failure
-    
