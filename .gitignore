@@ -34,3 +34,4 @@ test_dir
 3rdparty/zlib/
 3rdparty/concurrentqueue/
 test.sh
+scratch/
