@@ -42,14 +42,17 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "rocksdb/options.h"
 #include "rocksdb/version.h"
 
-#if ROCKSDB_MAJOR >= 11
+// RocksDB 10.0 changed DB::Open's output parameter from DB** to
+// std::unique_ptr<DB>*. Select the matching field type so overload
+// resolution on &kvdb picks the right Open() in kvdb.cpp.
+#if ROCKSDB_MAJOR >= 10
 #include <memory>
 #endif
 
 class KeyValueDatabase {
 public:
 	KeyValueDatabase(std::string const &kvdbPath);
-#if ROCKSDB_MAJOR >= 11
+#if ROCKSDB_MAJOR >= 10
 	~KeyValueDatabase() = default;
 #else
 	~KeyValueDatabase() { delete kvdb; }
@@ -59,7 +62,7 @@ public:
 	std::string get(std::string key);
 	int clear(std::string dbPath);
 private:
-#if ROCKSDB_MAJOR >= 11
+#if ROCKSDB_MAJOR >= 10
 	std::unique_ptr<rocksdb::DB> kvdb;
 #else
 	rocksdb::DB* kvdb;

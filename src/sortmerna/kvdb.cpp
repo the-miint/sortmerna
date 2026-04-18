@@ -41,7 +41,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <stdexcept>
 
-KeyValueDatabase::KeyValueDatabase(std::string const &kvdbPath) 
+static_assert(ROCKSDB_MAJOR >= 7, "sortmerna requires RocksDB >= 7");
+
+KeyValueDatabase::KeyValueDatabase(std::string const &kvdbPath)
 {
 	// init and open key-value database for read matches
 	options.IncreaseParallelism();
