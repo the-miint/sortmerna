@@ -36,6 +36,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "report.h"
 
 // forward
+
+namespace sortmerna {
+
 class Read;
 class References;
 
@@ -49,3 +52,5 @@ public:
 	void append(const uint32_t& id, Read& read, References& refs, Runopts& opts);
 	void write_header(Runopts& opts);
 };
+
+} // namespace sortmerna

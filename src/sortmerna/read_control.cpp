@@ -48,6 +48,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "read.hpp"
 
 
+
+namespace sortmerna {
+
 ReadControl::ReadControl(Runopts & opts, ReadsQueue & readQueue, KeyValueDatabase & kvdb)
 	:
 	opts(opts),
@@ -149,3 +152,5 @@ void ReadControl::run()
 } // ~ReadControl::run
 
 // ~read_control.cpp
+
+} // namespace sortmerna

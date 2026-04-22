@@ -40,6 +40,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "izlib.hpp"
 
 // forward
+
+namespace sortmerna {
+
 class Readfeed;
 struct Runopts;
 
@@ -100,3 +103,5 @@ protected:
 	std::vector<Izlib> vzlib_out;
 	std::vector<Readstate> vstate_out;
 };
+
+} // namespace sortmerna

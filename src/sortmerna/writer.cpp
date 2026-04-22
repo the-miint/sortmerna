@@ -42,6 +42,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 
 // write read alignment results to disk using e.g. RocksDB
+
+namespace sortmerna {
+
 void Writer::write()
 {
 	{
@@ -83,3 +86,4 @@ void Writer::write()
 		std::cout << ss.str();
 	}
 } // Writer::write
+} // namespace sortmerna

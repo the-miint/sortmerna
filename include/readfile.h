@@ -34,6 +34,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include <filesystem>
 
+
+namespace sortmerna {
+
 struct Readfile {
 	Readfile() : isFastq(false), isFasta(false), isZip(false), numreads(0), size(0) {}
 	bool isFastq; // file is FASTQ
@@ -43,3 +46,5 @@ struct Readfile {
 	std::filesystem::path path;
 	std::streampos size;
 };
+
+} // namespace sortmerna

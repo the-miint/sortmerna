@@ -55,6 +55,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
  * key to find the positions and the window number
  * on the read at which the 18-mer occurs 
  */
+
+namespace sortmerna {
+
 struct id_win
 {
 	// a numeric value obtained from a given k-mer by using the
@@ -127,3 +130,4 @@ void traversetrie_align(
 	uint32_t partialwin,
 	Runopts& opts
 );
+} // namespace sortmerna

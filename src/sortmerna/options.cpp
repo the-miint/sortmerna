@@ -98,6 +98,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 // forward
+
+namespace sortmerna {
+
 void about();
 //void help();
 std::string get_user_home(); // util.cpp
@@ -1841,3 +1844,4 @@ void about()
 
 	std::cout << ss.str();
 }
+} // namespace sortmerna

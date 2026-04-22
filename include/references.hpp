@@ -45,6 +45,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "common.hpp" // Format, FASTA_HEADER_START, FASTQ_HEADER_START
 
 // forward
+
+namespace sortmerna {
+
 class Refstats;
 struct Runopts;
 
@@ -97,3 +100,5 @@ public:
 //private:
 //	bool load_for_search;
 }; // ~class References
+
+} // namespace sortmerna

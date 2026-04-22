@@ -82,6 +82,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <stdexcept>
 
 // forward
+
+namespace sortmerna {
+
 std::streampos filesize(const std::string& file); //util.cpp
 
 /*
@@ -1430,3 +1433,4 @@ int Readfeed::clean()
 	}
 	return n_del;
 } // ~Readfeed::clean
+} // namespace sortmerna

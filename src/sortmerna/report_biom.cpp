@@ -33,6 +33,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "report_biom.h"
 #include "common.hpp"
 
+
+namespace sortmerna {
+
 ReportBiom::ReportBiom(Runopts& opts) : Report(opts) {}
 
 ReportBiom::ReportBiom(Readfeed& readfeed, Runopts& opts) : ReportBiom(opts)
@@ -61,3 +64,4 @@ void ReportBiom::append()
 	fsv[0] << "\"data\":";
 	fsv[0].close();
 }
+} // namespace sortmerna

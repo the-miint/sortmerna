@@ -49,6 +49,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <memory>
 #endif
 
+
+namespace sortmerna {
+
 class KeyValueDatabase {
 public:
 	KeyValueDatabase(std::string const &kvdbPath);
@@ -69,3 +72,5 @@ private:
 #endif
 	rocksdb::Options options;
 };
+
+} // namespace sortmerna

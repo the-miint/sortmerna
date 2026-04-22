@@ -48,6 +48,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "readstate.h"
 #include "readfile.h"
 #include "read.hpp"
+
+namespace sortmerna {
+
 class KeyValueDatabase;
 struct Runopts;
 
@@ -181,3 +184,4 @@ private:
 };
 
 // ~readfeed.hpp
+} // namespace sortmerna

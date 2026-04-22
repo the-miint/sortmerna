@@ -60,6 +60,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
  * PARAMETERS	: 	  
  *
  **************************************************************************************************************/
+
+namespace sortmerna {
+
 void init_win_f ( char*, UCHAR*, UCHAR*, int numbvs );
 void init_win_r ( char*, UCHAR*, UCHAR*, int numbvs );
 
@@ -86,4 +89,6 @@ void offset_win_k1 ( char*, char*, UCHAR*, UCHAR*, UCHAR*, int numbvs );
  **************************************************************************************************************/
 void output_win_k1 (UCHAR*, bool, int partialwin );
 
+
+} // namespace sortmerna
 #endif 

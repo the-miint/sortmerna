@@ -52,6 +52,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "readfeed.hpp"
 
 // forward
+
+namespace sortmerna {
+
 class Read;
 struct Index;
 class KeyValueDatabase;
@@ -269,3 +272,4 @@ void writeReports(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kv
 	elapsed = std::chrono::high_resolution_clock::now() - start;
 	INFO("=== done Reports in ", elapsed.count(), " sec ===\n");
 } // ~writeReports
+} // namespace sortmerna

@@ -41,8 +41,6 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "bursttrie.hpp"
 #include <fstream>
 
-using namespace std;
-
 /* Legacy header -- extern declarations removed in Phase 3.
  * Variables are now encapsulated in IndexBuildState (indexdb.cpp).
  * This header is not included by any compiled source file. */

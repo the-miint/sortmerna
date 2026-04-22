@@ -37,6 +37,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "readsqueue.hpp"
 #include "kvdb.hpp"
 
+
+namespace sortmerna {
+
 class Writer {
 public:
 	Writer(std::string id, ReadsQueue & writeQueue, KeyValueDatabase & kvdb, Runopts & opts)
@@ -51,3 +54,5 @@ private:
 	KeyValueDatabase & kvdb; // key-value database path (from Options)
 	Runopts & opts;
 };
+
+} // namespace sortmerna

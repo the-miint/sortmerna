@@ -45,6 +45,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "izlib.hpp"
 #include "common.hpp"
 
+namespace sortmerna {
 
 /*
  * @param is_compress  flags to compress (true) or inflate (false) the output
@@ -389,3 +390,5 @@ int Izlib::finish_deflate(std::ostream& ofs, const int&& dbg)
 		INFO("deflateEnd called");
 	return deflateEnd(&strm);
 }
+
+} // namespace sortmerna

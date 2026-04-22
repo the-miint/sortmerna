@@ -42,6 +42,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <vector>
 
 // forward
+
+namespace sortmerna {
+
 struct Runopts;
 class Refstats;
 struct Readstats;
@@ -77,3 +80,5 @@ public:
 	void write(Refstats& refstats, Readstats& readstats, Runopts& opts);
 	std::string to_string(Refstats& refstats, Runopts& opts);
 };
+
+} // namespace sortmerna

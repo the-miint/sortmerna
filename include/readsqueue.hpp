@@ -57,6 +57,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 /**
  * Queue for Reads' records. Concurrently accessed by the Reader (producer) and the Processors (consumers)
  */
+
+namespace sortmerna {
+
 class ReadsQueue 
 {
 public:
@@ -179,3 +182,5 @@ public:
 	}
 
 }; // ~class ReadsQueue
+
+} // namespace sortmerna

@@ -52,10 +52,12 @@ const char FASTQ_HEADER_START = '@';
 const std::string FWD = "FWD";
 const std::string REV = "REV";
 
+namespace sortmerna {
 enum class BIO_FORMAT : unsigned { FASTQ = 0, FASTA = 1 };
 enum class ZIP_FORMAT : unsigned { GZIP = 0, ZLIB = 1, FLAT = 2, XPRESS = 3 };
 enum class FEED_TYPE : unsigned { SPLIT_READS = 0, LOCKLESS = 1, MEMORY = 2, MAX = MEMORY };
 enum class BlastFormat { TABULAR, REGULAR}; // format of the Blast output
+} // namespace sortmerna
 
 /*! @brief Map nucleotides to integers.
 Ambiguous letters map to 4.

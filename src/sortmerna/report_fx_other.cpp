@@ -37,6 +37,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "options.hpp"
 #include "read.hpp"
 
+
+namespace sortmerna {
+
 ReportFxOther::ReportFxOther(Runopts& opts) : Report(opts), base() {}
 ReportFxOther::ReportFxOther(Readfeed& readfeed, Runopts& opts) : ReportFxOther(opts) { init(readfeed, opts); }
 
@@ -130,3 +133,4 @@ ReportFxBase& ReportFxOther::getBase()
 {
 	return base;
 }
+} // namespace sortmerna

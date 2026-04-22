@@ -62,6 +62,11 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #if defined(_WIN32)
 #include <Winsock.h>
+#endif
+
+namespace sortmerna {
+
+#if defined(_WIN32)
 const std::string ENV_TMPDIR = "TMP";
 const char PATH_SEPARATOR = '\\';
 #else
@@ -1896,3 +1901,5 @@ int build_index(Runopts& opts)
 	INFO("==== Done index building in ", elapsed.count(), " sec ====\n");
 	return 0;
 }//~build_index
+
+} // namespace sortmerna

@@ -44,6 +44,9 @@ using namespace std;
 
 
 /// 4 bit mask 00001111 to keep the bitvectors of length 4
+
+namespace sortmerna {
+
 const UCHAR mask_4 = 15;
 /// 3 bit mask the first four bitvectors of substrings $xxx
 const UCHAR mask_3 = 7;
@@ -238,3 +241,5 @@ output_win_k1 (UCHAR* bittable_000, bool w, int partialwin )
 
 }//~output_win_k1()
 
+
+} // namespace sortmerna

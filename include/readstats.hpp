@@ -51,6 +51,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "options.hpp"
 
 // forward
+
+namespace sortmerna {
+
 class KeyValueDatabase;
 
 /*
@@ -96,3 +99,5 @@ struct Readstats
 	void store_to_db(KeyValueDatabase & kvdb);
 	void set_is_set_aligned_id_cov();
 }; // ~struct Readstats
+
+} // namespace sortmerna

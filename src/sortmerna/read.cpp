@@ -45,6 +45,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "read.hpp"
 #include "references.hpp"
 
+
+namespace sortmerna {
+
 alignment_struct2::alignment_struct2() : max_size(0), min_index(0), max_index(0) 
 {}
 
@@ -651,3 +654,4 @@ bool Read::from_string(std::string& readstr)
 	}
 	return is_ok;
 } // ~Read::from_string
+} // namespace sortmerna
