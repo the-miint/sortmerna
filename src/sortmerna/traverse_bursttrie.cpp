@@ -66,6 +66,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 	  <tr><td> 14 </td><td> NULL </td><td> failure state </td></tr>
 	 </table>
   */
+
+namespace sortmerna {
+
 uint32_t table[4][16][14] = {
 	{{3, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14},
 	{3, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14},
@@ -384,3 +387,4 @@ void traversetrie_debug(NodeElement* trie_node, uint32_t depth, uint32_t &total_
 
 }//~taversetrie_debug()
 #endif
+} // namespace sortmerna

@@ -41,6 +41,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <stdexcept>
 
+
+namespace sortmerna {
+
 static_assert(ROCKSDB_MAJOR >= 7, "sortmerna requires RocksDB >= 7");
 
 KeyValueDatabase::KeyValueDatabase(std::string const &kvdbPath)
@@ -76,3 +79,4 @@ std::string KeyValueDatabase::get(std::string key)
 	rocksdb::Status s = kvdb->Get(rocksdb::ReadOptions(), key, &val);
 	return val;
 }
+} // namespace sortmerna

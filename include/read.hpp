@@ -49,6 +49,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include "ssw.hpp" // s_align2
 #include "options.hpp"
 
+
+namespace sortmerna {
+
 class References; // forward
 
 struct alignment_struct2
@@ -172,3 +175,5 @@ public:
 	uint32_t hashKmer(uint32_t pos, uint32_t len);
 	bool from_string(std::string& readstr);
 }; // ~class Read
+
+} // namespace sortmerna

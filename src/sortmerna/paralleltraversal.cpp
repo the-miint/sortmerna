@@ -67,6 +67,11 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 // forward
+
+namespace sortmerna {
+
+using namespace std;
+
 int clear_dir(std::string dpath);
 
  // see "heuristic 1" below
@@ -297,3 +302,4 @@ void traverse
 			read.is_done = true;
 	}
 } // ~traverse
+} // namespace sortmerna

@@ -39,12 +39,18 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #include <map>
 #include <queue>
+#include <deque>
+#include <vector>
+#include <utility>
 #include <algorithm>
 
 #include "traverse_bursttrie.hpp"
 #include "ssw.hpp"
 
  // forward
+
+namespace sortmerna {
+
 class Read;
 struct Runopts;
 struct Index;
@@ -52,8 +58,6 @@ class References;
 class Output;
 struct Readstats;
 class Refstats;
-
-using namespace std;
 
 /*! @brief Number of slots by which to dynamically
            increment the array storing all alignments
@@ -68,7 +72,7 @@ using namespace std;
     A data structure holding two variables
     of type uint32_t.
 */
-typedef pair<uint32_t,uint32_t> uint32pair;
+typedef std::pair<uint32_t,uint32_t> uint32pair;
 
 
 /*! @fn smallest()
@@ -101,7 +105,7 @@ typedef pair<uint32_t,uint32_t> uint32pair;
     @param deque<pair<uint32_t, uint32_t> > &a  list of matching positions on the read which fall within a range of the read's length on the genome
     @param vector<uint32_t> &b  array of starting positions of each longest subsequence
 */
-void find_lis(deque<pair<uint32_t, uint32_t> > &a, vector<uint32_t> &b);
+void find_lis(std::deque<std::pair<uint32_t, uint32_t> > &a, std::vector<uint32_t> &b);
 
 /*! @brief struct alignment_struct
    holds the index of the minimum and maximum scoring
@@ -113,13 +117,13 @@ struct alignment_struct
   uint32_t size; // actual size of s_align array
   uint32_t min_index;
   uint32_t max_index;
-  s_align* ptr;
+  ::s_align* ptr; // ::s_align is the C struct from ssw.h (global namespace)
   alignment_struct(): max_size(0), size(0), min_index(0), max_index(0), ptr(0) {}
   alignment_struct(uint32_t max_size,
                    uint32_t size,
                    uint32_t min,
                    uint32_t max,
-                   s_align* p) : max_size(max_size), size(size), min_index(min), max_index(max), ptr(p) {}
+                   ::s_align* p) : max_size(max_size), size(size), min_index(min), max_index(max), ptr(p) {}
 };
 /*
  * called on each idx * part * read * strand * [1..max opts.skiplengths[index_num].size (3 by default)]
@@ -137,3 +141,4 @@ struct alignment_struct
  */
 void compute_lis_alignment(Read& read, Runopts& opts, Index& index, References& refs,
                            Readstats& readstats, Refstats& refstats, bool& search, uint32_t max_SW_score);
+} // namespace sortmerna

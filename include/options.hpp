@@ -48,18 +48,21 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #include <array>
 #include <filesystem>
 #include <stdexcept>
+#include <cstdint>  // uint64_t
+
+#include "common.hpp"
 
 /* Thrown by --help / --version to signal a clean early exit.
  * main() catches this and calls exit(0). Library callers catch
  * and return SMR_ERR_INVALID_CONFIG. */
+
+namespace sortmerna {
+
 class smr_exit_requested : public std::runtime_error {
 public:
     explicit smr_exit_requested(const std::string& msg)
         : std::runtime_error(msg) {}
 };
-#include <cstdint>  // uint64_t
-
-#include "common.hpp"
 
 /*! @brief Maximum length of input reads
     (not limited to this length algorithmically)
@@ -784,3 +787,5 @@ private:
 	// ~map options
 }; // ~struct Runopts
 // ~options.cpp
+
+} // namespace sortmerna

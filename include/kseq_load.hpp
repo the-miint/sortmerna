@@ -34,7 +34,7 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
  * @file kseq_load.hpp
  * @brief Function and variable definitions for kseq_load.cpp
  */
- 
+
 #ifndef KSEQ_LOAD_H
 #define KSEQ_LOAD_H
 
@@ -43,14 +43,17 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 
 #ifdef HAVE_LIBZ
 #include <zlib.h>
-KSEQ_INIT(gzFile, gzread)
-#else
-KSEQ_INIT(int, read)
 #endif
 
 #include <cstdint>
 
+namespace sortmerna {
 
+#ifdef HAVE_LIBZ
+KSEQ_INIT(gzFile, gzread)
+#else
+KSEQ_INIT(int, read)
+#endif
 
 /*! @fn load_reads()
     @brief load reads into buffer using kseq library
@@ -60,7 +63,7 @@ KSEQ_INIT(int, read)
     @param off_t full_file_size
     @param char*& finalnt
     @return char** reads
-    @version Feb 08, 2016 
+    @version Feb 08, 2016
 */
 char**
 load_reads(char* inputreads,
@@ -68,5 +71,7 @@ load_reads(char* inputreads,
            uint64_t number_total_read,
            off_t full_file_size,
            char*& finalnt);
+
+} // namespace sortmerna
 
 #endif

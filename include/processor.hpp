@@ -40,6 +40,9 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #pragma once
 
 // forward
+
+namespace sortmerna {
+
 class Readfeed;
 class References;
 class Refstats;
@@ -63,3 +66,5 @@ void align_loaded(Readfeed& readfeed, Readstats& readstats,
                   uint16_t idx_num, uint16_t idx_part);
 
 void denovo_stats(Readfeed& readfeed, Readstats& readstats, KeyValueDatabase& kvdb, Runopts& opts);
+
+} // namespace sortmerna

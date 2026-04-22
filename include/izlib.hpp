@@ -47,6 +47,8 @@ along with SortMeRNA. If not, see <http://www.gnu.org/licenses/>.
 #define RL_END   1
 #define RL_ERR  -1
 
+namespace sortmerna {
+
 class Izlib
 {
 public:
@@ -94,3 +96,5 @@ private:
 	*/
 	int inflatez(std::ifstream& ifs); // 'z' in the name to distinguish from zlib.inflate
 };
+
+} // namespace sortmerna
