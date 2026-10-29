@@ -1,0 +1,12 @@
+[submodule "3rdparty/indexed_bzip2"]
+	path = 3rdparty/indexed_bzip2
+	url = https://github.com/mxmlnkn/librapidarchive.git
+[submodule "3rdparty/bbhash"]
+	path = 3rdparty/bbhash
+	url = https://github.com/rizkg/BBHash.git
+[submodule "3rdparty/cxxopts"]
+	path = 3rdparty/cxxopts
+	url = https://github.com/jarro2783/cxxopts.git
+[submodule "3rdparty/parasail"]
+	path = 3rdparty/parasail
+	url = https://github.com/jeffdaily/parasail.git
